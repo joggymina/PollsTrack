@@ -1,0 +1,209 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ======================
+// ADMINISTRATIVE HIERARCHY
+// ======================
+
+model County {
+  id             String         @id @default(cuid())
+  code           String         @unique
+  name           String
+  constituencies Constituency[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model Constituency {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  countyId  String
+  county    County   @relation(fields: [countyId], references: [id])
+  wards     Ward[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([countyId])
+}
+
+model Ward {
+  id              String           @id @default(cuid())
+  code            String           @unique
+  name            String
+  constituencyId  String
+  constituency    Constituency     @relation(fields: [constituencyId], references: [id])
+  pollingStations PollingStation[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([constituencyId])
+}
+
+model PollingStation {
+  id               String            @id @default(cuid())
+  code             String            @unique
+  name             String
+  wardId           String
+  ward             Ward              @relation(fields: [wardId], references: [id])
+  registeredVoters Int?
+  latitude         Float?
+  longitude        Float?
+  results          StationResult[]
+  agents           AgentAssignment[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([wardId])
+}
+
+// ======================
+// USERS & AUTHORIZATION
+// ======================
+
+enum UserRole {
+  SUPER_ADMIN
+  NATIONAL_VIEWER
+  COUNTY_VIEWER
+  CONSTITUENCY_VIEWER
+  WARD_VIEWER
+  AGENT
+}
+
+model User {
+  id               String            @id @default(cuid())
+  phone            String            @unique
+  name             String
+  role             UserRole          @default(AGENT)
+  isActive         Boolean           @default(true)
+  countyId         String?
+  constituencyId   String?
+  wardId           String?
+  agentAssignments AgentAssignment[]
+  submittedResults StationResult[]
+  auditLogs        AuditLog[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model AgentAssignment {
+  id               String         @id @default(cuid())
+  userId           String
+  user             User           @relation(fields: [userId], references: [id])
+  pollingStationId String
+  pollingStation   PollingStation @relation(fields: [pollingStationId], references: [id])
+  createdAt        DateTime       @default(now())
+
+  @@unique([userId, pollingStationId])
+}
+
+// ======================
+// ELECTIONS & CANDIDATES
+// ======================
+
+model Election {
+  id        String   @id @default(cuid())
+  name      String
+  type      String
+  status    String   @default("DRAFT")
+  startDate DateTime?
+  endDate   DateTime?
+  races     Race[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Race {
+  id             String          @id @default(cuid())
+  electionId     String
+  election       Election        @relation(fields: [electionId], references: [id])
+  position       String
+  scope          String
+  countyId       String?
+  constituencyId String?
+  wardId         String?
+  candidates     Candidate[]
+  results        StationResult[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model Candidate {
+  id       String       @id @default(cuid())
+  raceId   String
+  race     Race         @relation(fields: [raceId], references: [id])
+  name     String
+  code     String?
+  party    String?
+  photoUrl String?
+  isActive Boolean      @default(true)
+  votes    ResultVote[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+// ======================
+// RESULTS
+// ======================
+
+model StationResult {
+  id               String       @id @default(cuid())
+  pollingStationId String
+  pollingStation   PollingStation @relation(fields: [pollingStationId], references: [id])
+  raceId           String
+  race             Race         @relation(fields: [raceId], references: [id])
+  submittedById    String
+  submittedBy      User         @relation(fields: [submittedById], references: [id])
+  totalRegistered  Int?
+  totalVoted       Int?
+  rejectedBallots  Int          @default(0)
+  formPhotoUrl     String?
+  formPhotoHash    String?
+  clientSubmittedAt DateTime
+  serverReceivedAt DateTime     @default(now())
+  isOffline        Boolean      @default(false)
+  deviceInfo       Json?
+  status           String       @default("SUBMITTED")
+  votes            ResultVote[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([pollingStationId, raceId])
+  @@index([pollingStationId])
+  @@index([raceId])
+  @@index([submittedById])
+}
+
+model ResultVote {
+  id              String        @id @default(cuid())
+  stationResultId String
+  stationResult   StationResult @relation(fields: [stationResultId], references: [id], onDelete: Cascade)
+  candidateId     String
+  candidate       Candidate     @relation(fields: [candidateId], references: [id])
+  votes           Int
+
+  @@unique([stationResultId, candidateId])
+}
+
+// ======================
+// AUDIT
+// ======================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String?
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+}

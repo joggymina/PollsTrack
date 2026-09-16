@@ -1,6 +1,8 @@
+import dotenv from 'dotenv'
+dotenv.config()   // ← must be first
+
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
-import dotenv from 'dotenv'
 import { prisma } from '@polling/database'
 
 dotenv.config()
@@ -24,10 +26,10 @@ app.get('/health', async () => {
 // Test database connection
 app.get('/db-test', async () => {
   try {
-    const countyCount = await prisma.county.count()
+    const result = await prisma.$queryRaw`SELECT 1 as connected`
     return { 
       status: 'Database connected',
-      counties: countyCount
+      result 
     }
   } catch (error: any) {
     return { 

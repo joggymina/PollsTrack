@@ -11,5 +11,12 @@
     "db:generate": "npm run generate --workspace=packages/database",
     "db:migrate": "npm run migrate --workspace=packages/database",
     "db:studio": "npm run studio --workspace=packages/database"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
   }
 }

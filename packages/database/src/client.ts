@@ -4,9 +4,8 @@ import { Pool } from 'pg'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '../generated/prisma/client.js'
 
-// Load .env from the root of the monorepo
+// Load .env from monorepo root and local folder
 config({ path: resolve(process.cwd(), '../../.env') })
-// Also try the local one just in case
 config({ path: resolve(process.cwd(), '.env') })
 
 const globalForPrisma = globalThis as unknown as {
@@ -16,10 +15,15 @@ const globalForPrisma = globalThis as unknown as {
 const connectionString = process.env.DATABASE_URL
 
 if (!connectionString) {
-  throw new Error('DATABASE_URL is not set. Check your .env file.')
+  throw new Error('DATABASE_URL is not set')
 }
 
-const pool = new Pool({ connectionString })
+const pool = new Pool({
+  connectionString,
+  connectionTimeoutMillis: 20000, // 20 seconds
+  idleTimeoutMillis: 30000,
+})
+
 const adapter = new PrismaPg(pool)
 
 export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter })

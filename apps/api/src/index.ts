@@ -404,6 +404,298 @@ app.post('/polling-stations', async (request, reply) => {
 })
 
 // ======================
+// RESULTS (CORE FEATURE)
+// ======================
+
+/**
+ * Submit results for a polling station + race
+ */
+app.post('/results', async (request, reply) => {
+  const body = request.body as {
+    pollingStationId: string
+    raceId: string
+    submittedById: string
+    totalRegistered?: number
+    totalVoted?: number
+    rejectedBallots?: number
+    clientSubmittedAt: string
+    isOffline?: boolean
+    formPhotoUrl?: string
+    formPhotoHash?: string
+    deviceInfo?: Record<string, unknown>
+    votes: { candidateId: string; votes: number }[]
+  }
+
+  if (!body.pollingStationId || !body.raceId || !body.submittedById || !body.clientSubmittedAt) {
+    return reply.status(400).send({
+      error: 'pollingStationId, raceId, submittedById and clientSubmittedAt are required'
+    })
+  }
+
+  if (!Array.isArray(body.votes) || body.votes.length === 0) {
+    return reply.status(400).send({
+      error: 'votes array is required and must not be empty'
+    })
+  }
+
+  for (const v of body.votes) {
+    if (!v.candidateId || typeof v.votes !== 'number' || v.votes < 0) {
+      return reply.status(400).send({
+        error: 'Each vote must have candidateId and a non-negative votes number'
+      })
+    }
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const stationResult = await tx.stationResult.create({
+        data: {
+          pollingStationId: body.pollingStationId,
+          raceId: body.raceId,
+          submittedById: body.submittedById,
+          totalRegistered: body.totalRegistered ?? null,
+          totalVoted: body.totalVoted ?? null,
+          rejectedBallots: body.rejectedBallots ?? 0,
+          clientSubmittedAt: new Date(body.clientSubmittedAt),
+          isOffline: body.isOffline ?? false,
+          formPhotoUrl: body.formPhotoUrl ?? null,
+          formPhotoHash: body.formPhotoHash ?? null,
+          deviceInfo: body.deviceInfo ?? undefined,
+          status: 'SUBMITTED',
+          votes: {
+            create: body.votes.map((v) => ({
+              candidateId: v.candidateId,
+              votes: v.votes,
+            })),
+          },
+        },
+        include: {
+          votes: {
+            include: {
+              candidate: {
+                select: { id: true, name: true, code: true, party: true },
+              },
+            },
+          },
+          pollingStation: {
+            select: { id: true, code: true, name: true },
+          },
+          race: {
+            select: { id: true, position: true },
+          },
+        },
+      })
+
+      await tx.auditLog.create({
+        data: {
+          userId: body.submittedById,
+          action: 'RESULT_SUBMITTED',
+          entityType: 'StationResult',
+          entityId: stationResult.id,
+          details: {
+            pollingStationId: body.pollingStationId,
+            raceId: body.raceId,
+            totalVoted: body.totalVoted,
+            isOffline: body.isOffline ?? false,
+          },
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'] ?? null,
+        },
+      })
+
+      return stationResult
+    })
+
+    return reply.status(201).send({ data: result })
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return reply.status(409).send({
+        error: 'Results for this polling station and race have already been submitted'
+      })
+    }
+    if (error.code === 'P2003') {
+      return reply.status(400).send({
+        error: 'Invalid pollingStationId, raceId, submittedById or candidateId'
+      })
+    }
+    throw error
+  }
+})
+
+/**
+ * List results (optional filters)
+ */
+app.post('/results', async (request, reply) => {
+  const body = request.body as {
+    pollingStationId: string
+    raceId: string
+    submittedById: string
+    totalRegistered?: number
+    totalVoted?: number
+    rejectedBallots?: number
+    clientSubmittedAt: string
+    isOffline?: boolean
+    formPhotoUrl?: string
+    formPhotoHash?: string
+    deviceInfo?: Record<string, unknown>
+    votes: { candidateId: string; votes: number }[]
+  }
+
+  if (!body.pollingStationId || !body.raceId || !body.submittedById || !body.clientSubmittedAt) {
+    return reply.status(400).send({
+      error: 'pollingStationId, raceId, submittedById and clientSubmittedAt are required'
+    })
+  }
+
+  if (!Array.isArray(body.votes) || body.votes.length === 0) {
+    return reply.status(400).send({
+      error: 'votes array is required and must not be empty'
+    })
+  }
+
+  for (const v of body.votes) {
+    if (!v.candidateId || typeof v.votes !== 'number' || v.votes < 0) {
+      return reply.status(400).send({
+        error: 'Each vote must have candidateId and a non-negative votes number'
+      })
+    }
+  }
+
+  try {
+    // Create result + votes in one query (no interactive transaction)
+    const stationResult = await prisma.stationResult.create({
+      data: {
+        pollingStationId: body.pollingStationId,
+        raceId: body.raceId,
+        submittedById: body.submittedById,
+        totalRegistered: body.totalRegistered ?? null,
+        totalVoted: body.totalVoted ?? null,
+        rejectedBallots: body.rejectedBallots ?? 0,
+        clientSubmittedAt: new Date(body.clientSubmittedAt),
+        isOffline: body.isOffline ?? false,
+        formPhotoUrl: body.formPhotoUrl ?? null,
+        formPhotoHash: body.formPhotoHash ?? null,
+        deviceInfo: body.deviceInfo ?? undefined,
+        status: 'SUBMITTED',
+        votes: {
+          create: body.votes.map((v) => ({
+            candidateId: v.candidateId,
+            votes: v.votes,
+          })),
+        },
+      },
+      include: {
+        votes: {
+          include: {
+            candidate: {
+              select: { id: true, name: true, code: true, party: true },
+            },
+          },
+        },
+        pollingStation: {
+          select: { id: true, code: true, name: true },
+        },
+        race: {
+          select: { id: true, position: true },
+        },
+      },
+    })
+
+    // Audit log (best-effort – does not fail the submission)
+    try {
+      await prisma.auditLog.create({
+        data: {
+          userId: body.submittedById,
+          action: 'RESULT_SUBMITTED',
+          entityType: 'StationResult',
+          entityId: stationResult.id,
+          details: {
+            pollingStationId: body.pollingStationId,
+            raceId: body.raceId,
+            totalVoted: body.totalVoted,
+            isOffline: body.isOffline ?? false,
+          },
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'] ?? null,
+        },
+      })
+    } catch (auditError) {
+      console.error('Audit log failed (result still saved):', auditError)
+    }
+
+    return reply.status(201).send({ data: stationResult })
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return reply.status(409).send({
+        error: 'Results for this polling station and race have already been submitted'
+      })
+    }
+    if (error.code === 'P2003') {
+      return reply.status(400).send({
+        error: 'Invalid pollingStationId, raceId, submittedById or candidateId'
+      })
+    }
+    throw error
+  }
+})
+
+/**
+ * Get a single result by ID
+ */
+app.get('/results/:id', async (request, reply) => {
+  const { id } = request.params as { id: string }
+
+  const result = await prisma.stationResult.findUnique({
+    where: { id },
+    include: {
+      votes: {
+        include: {
+          candidate: {
+            select: { id: true, name: true, code: true, party: true },
+          },
+        },
+      },
+      pollingStation: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          ward: {
+            select: {
+              id: true,
+              name: true,
+              constituency: {
+                select: {
+                  id: true,
+                  name: true,
+                  county: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+      race: {
+        select: {
+          id: true,
+          position: true,
+          election: { select: { id: true, name: true } },
+        },
+      },
+      submittedBy: {
+        select: { id: true, name: true, phone: true },
+      },
+    },
+  })
+
+  if (!result) {
+    return reply.status(404).send({ error: 'Result not found' })
+  }
+
+  return { data: result }
+})
+
+// ======================
 // ROOT
 // ======================
 
@@ -428,7 +720,12 @@ app.get('/', async () => {
       'GET  /polling-stations',
       'GET  /polling-stations?wardId=xxx',
       'GET  /polling-stations/:id',
-      'POST /polling-stations'
+      'POST /polling-stations',
+      'POST /results',
+      'GET  /results',
+      'GET  /results?raceId=xxx',
+      'GET  /results?pollingStationId=xxx',
+      'GET  /results/:id'
     ]
   }
 })

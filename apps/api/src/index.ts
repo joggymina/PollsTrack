@@ -43,7 +43,6 @@ app.get('/db-test', async () => {
 // COUNTIES
 // ======================
 
-// Get all counties
 app.get('/counties', async () => {
   const counties = await prisma.county.findMany({
     orderBy: { code: 'asc' },
@@ -57,7 +56,6 @@ app.get('/counties', async () => {
   return { data: counties }
 })
 
-// Get a single county by ID
 app.get('/counties/:id', async (request, reply) => {
   const { id } = request.params as { id: string }
 
@@ -69,7 +67,8 @@ app.get('/counties/:id', async (request, reply) => {
           id: true,
           code: true,
           name: true
-        }
+        },
+        orderBy: { code: 'asc' }
       }
     }
   })
@@ -81,7 +80,6 @@ app.get('/counties/:id', async (request, reply) => {
   return { data: county }
 })
 
-// Create a new county (Admin)
 app.post('/counties', async (request, reply) => {
   const body = request.body as { code: string; name: string }
 
@@ -106,6 +104,93 @@ app.post('/counties', async (request, reply) => {
 })
 
 // ======================
+// CONSTITUENCIES
+// ======================
+
+// Get all constituencies (optional filter by countyId)
+app.get('/constituencies', async (request) => {
+  const { countyId } = request.query as { countyId?: string }
+
+  const constituencies = await prisma.constituency.findMany({
+    where: countyId ? { countyId } : undefined,
+    orderBy: { code: 'asc' },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      countyId: true,
+      county: {
+        select: {
+          id: true,
+          code: true,
+          name: true
+        }
+      }
+    }
+  })
+
+  return { data: constituencies }
+})
+
+// Get a single constituency
+app.get('/constituencies/:id', async (request, reply) => {
+  const { id } = request.params as { id: string }
+
+  const constituency = await prisma.constituency.findUnique({
+    where: { id },
+    include: {
+      county: {
+        select: { id: true, code: true, name: true }
+      },
+      wards: {
+        select: { id: true, code: true, name: true },
+        orderBy: { code: 'asc' }
+      }
+    }
+  })
+
+  if (!constituency) {
+    return reply.status(404).send({ error: 'Constituency not found' })
+  }
+
+  return { data: constituency }
+})
+
+// Create a new constituency
+app.post('/constituencies', async (request, reply) => {
+  const body = request.body as { 
+    code: string
+    name: string
+    countyId: string 
+  }
+
+  if (!body.code || !body.name || !body.countyId) {
+    return reply.status(400).send({ 
+      error: 'code, name and countyId are required' 
+    })
+  }
+
+  try {
+    const constituency = await prisma.constituency.create({
+      data: {
+        code: body.code,
+        name: body.name,
+        countyId: body.countyId
+      }
+    })
+    return reply.status(201).send({ data: constituency })
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return reply.status(409).send({ error: 'Constituency with this code already exists' })
+    }
+    if (error.code === 'P2003') {
+      return reply.status(400).send({ error: 'Invalid countyId' })
+    }
+    throw error
+  }
+})
+
+// ======================
 // ROOT
 // ======================
 
@@ -118,7 +203,11 @@ app.get('/', async () => {
       'GET  /db-test',
       'GET  /counties',
       'GET  /counties/:id',
-      'POST /counties'
+      'POST /counties',
+      'GET  /constituencies',
+      'GET  /constituencies?countyId=xxx',
+      'GET  /constituencies/:id',
+      'POST /constituencies'
     ]
   }
 })

@@ -27,9 +27,11 @@ app.get('/health', async () => {
 app.get('/db-test', async () => {
   try {
     const countyCount = await prisma.county.count()
+    const stationCount = await prisma.pollingStation.count()
     return { 
       status: 'Database connected',
-      counties: countyCount
+      counties: countyCount,
+      pollingStations: stationCount
     }
   } catch (error: any) {
     return { 
@@ -242,7 +244,8 @@ app.get('/wards/:id', async (request, reply) => {
         select: {
           id: true,
           code: true,
-          name: true
+          name: true,
+          registeredVoters: true
         },
         orderBy: { code: 'asc' }
       }
@@ -290,6 +293,117 @@ app.post('/wards', async (request, reply) => {
 })
 
 // ======================
+// POLLING STATIONS
+// ======================
+
+app.get('/polling-stations', async (request) => {
+  const { wardId } = request.query as { wardId?: string }
+
+  const stations = await prisma.pollingStation.findMany({
+    where: wardId ? { wardId } : undefined,
+    orderBy: { code: 'asc' },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      registeredVoters: true,
+      wardId: true,
+      ward: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          constituency: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              county: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  })
+
+  return { data: stations }
+})
+
+app.get('/polling-stations/:id', async (request, reply) => {
+  const { id } = request.params as { id: string }
+
+  const station = await prisma.pollingStation.findUnique({
+    where: { id },
+    include: {
+      ward: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          constituency: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              county: {
+                select: { id: true, code: true, name: true }
+              }
+            }
+          }
+        }
+      }
+    }
+  })
+
+  if (!station) {
+    return reply.status(404).send({ error: 'Polling station not found' })
+  }
+
+  return { data: station }
+})
+
+app.post('/polling-stations', async (request, reply) => {
+  const body = request.body as {
+    code: string
+    name: string
+    wardId: string
+    registeredVoters?: number
+  }
+
+  if (!body.code || !body.name || !body.wardId) {
+    return reply.status(400).send({
+      error: 'code, name and wardId are required'
+    })
+  }
+
+  try {
+    const station = await prisma.pollingStation.create({
+      data: {
+        code: body.code,
+        name: body.name,
+        wardId: body.wardId,
+        registeredVoters: body.registeredVoters ?? null
+      }
+    })
+    return reply.status(201).send({ data: station })
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return reply.status(409).send({ error: 'Polling station with this code already exists' })
+    }
+    if (error.code === 'P2003') {
+      return reply.status(400).send({ error: 'Invalid wardId' })
+    }
+    throw error
+  }
+})
+
+// ======================
 // ROOT
 // ======================
 
@@ -310,7 +424,11 @@ app.get('/', async () => {
       'GET  /wards',
       'GET  /wards?constituencyId=xxx',
       'GET  /wards/:id',
-      'POST /wards'
+      'POST /wards',
+      'GET  /polling-stations',
+      'GET  /polling-stations?wardId=xxx',
+      'GET  /polling-stations/:id',
+      'POST /polling-stations'
     ]
   }
 })

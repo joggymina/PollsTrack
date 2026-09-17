@@ -409,6 +409,7 @@ app.post('/polling-stations', async (request, reply) => {
 
 /**
  * Submit results for a polling station + race
+ * (No interactive transaction – works with Neon pooler)
  */
 app.post('/results', async (request, reply) => {
   const body = request.body as {
@@ -447,122 +448,6 @@ app.post('/results', async (request, reply) => {
   }
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const stationResult = await tx.stationResult.create({
-        data: {
-          pollingStationId: body.pollingStationId,
-          raceId: body.raceId,
-          submittedById: body.submittedById,
-          totalRegistered: body.totalRegistered ?? null,
-          totalVoted: body.totalVoted ?? null,
-          rejectedBallots: body.rejectedBallots ?? 0,
-          clientSubmittedAt: new Date(body.clientSubmittedAt),
-          isOffline: body.isOffline ?? false,
-          formPhotoUrl: body.formPhotoUrl ?? null,
-          formPhotoHash: body.formPhotoHash ?? null,
-          deviceInfo: body.deviceInfo ?? undefined,
-          status: 'SUBMITTED',
-          votes: {
-            create: body.votes.map((v) => ({
-              candidateId: v.candidateId,
-              votes: v.votes,
-            })),
-          },
-        },
-        include: {
-          votes: {
-            include: {
-              candidate: {
-                select: { id: true, name: true, code: true, party: true },
-              },
-            },
-          },
-          pollingStation: {
-            select: { id: true, code: true, name: true },
-          },
-          race: {
-            select: { id: true, position: true },
-          },
-        },
-      })
-
-      await tx.auditLog.create({
-        data: {
-          userId: body.submittedById,
-          action: 'RESULT_SUBMITTED',
-          entityType: 'StationResult',
-          entityId: stationResult.id,
-          details: {
-            pollingStationId: body.pollingStationId,
-            raceId: body.raceId,
-            totalVoted: body.totalVoted,
-            isOffline: body.isOffline ?? false,
-          },
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'] ?? null,
-        },
-      })
-
-      return stationResult
-    })
-
-    return reply.status(201).send({ data: result })
-  } catch (error: any) {
-    if (error.code === 'P2002') {
-      return reply.status(409).send({
-        error: 'Results for this polling station and race have already been submitted'
-      })
-    }
-    if (error.code === 'P2003') {
-      return reply.status(400).send({
-        error: 'Invalid pollingStationId, raceId, submittedById or candidateId'
-      })
-    }
-    throw error
-  }
-})
-
-/**
- * List results (optional filters)
- */
-app.post('/results', async (request, reply) => {
-  const body = request.body as {
-    pollingStationId: string
-    raceId: string
-    submittedById: string
-    totalRegistered?: number
-    totalVoted?: number
-    rejectedBallots?: number
-    clientSubmittedAt: string
-    isOffline?: boolean
-    formPhotoUrl?: string
-    formPhotoHash?: string
-    deviceInfo?: Record<string, unknown>
-    votes: { candidateId: string; votes: number }[]
-  }
-
-  if (!body.pollingStationId || !body.raceId || !body.submittedById || !body.clientSubmittedAt) {
-    return reply.status(400).send({
-      error: 'pollingStationId, raceId, submittedById and clientSubmittedAt are required'
-    })
-  }
-
-  if (!Array.isArray(body.votes) || body.votes.length === 0) {
-    return reply.status(400).send({
-      error: 'votes array is required and must not be empty'
-    })
-  }
-
-  for (const v of body.votes) {
-    if (!v.candidateId || typeof v.votes !== 'number' || v.votes < 0) {
-      return reply.status(400).send({
-        error: 'Each vote must have candidateId and a non-negative votes number'
-      })
-    }
-  }
-
-  try {
-    // Create result + votes in one query (no interactive transaction)
     const stationResult = await prisma.stationResult.create({
       data: {
         pollingStationId: body.pollingStationId,
@@ -601,7 +486,7 @@ app.post('/results', async (request, reply) => {
       },
     })
 
-    // Audit log (best-effort – does not fail the submission)
+    // Audit log (best-effort)
     try {
       await prisma.auditLog.create({
         data: {
@@ -637,6 +522,46 @@ app.post('/results', async (request, reply) => {
     }
     throw error
   }
+})
+
+/**
+ * List results (optional filters)
+ */
+app.get('/results', async (request) => {
+  const { raceId, pollingStationId, status } = request.query as {
+    raceId?: string
+    pollingStationId?: string
+    status?: string
+  }
+
+  const results = await prisma.stationResult.findMany({
+    where: {
+      ...(raceId ? { raceId } : {}),
+      ...(pollingStationId ? { pollingStationId } : {}),
+      ...(status ? { status } : {}),
+    },
+    orderBy: { serverReceivedAt: 'desc' },
+    include: {
+      votes: {
+        include: {
+          candidate: {
+            select: { id: true, name: true, code: true, party: true },
+          },
+        },
+      },
+      pollingStation: {
+        select: { id: true, code: true, name: true },
+      },
+      race: {
+        select: { id: true, position: true },
+      },
+      submittedBy: {
+        select: { id: true, name: true, phone: true },
+      },
+    },
+  })
+
+  return { data: results }
 })
 
 /**
@@ -694,7 +619,248 @@ app.get('/results/:id', async (request, reply) => {
 
   return { data: result }
 })
+// ======================
+// AGGREGATION (REAL-TIME TOTALS)
+// ======================
 
+/**
+ * Helper: build candidate totals from a list of ResultVotes
+ */
+function buildCandidateTotals(votes: { candidateId: string; votes: number; candidate: { id: string; name: string; code: string | null; party: string | null } }[]) {
+  const map = new Map<string, { candidateId: string; name: string; code: string | null; party: string | null; totalVotes: number }>()
+
+  for (const v of votes) {
+    const existing = map.get(v.candidateId)
+    if (existing) {
+      existing.totalVotes += v.votes
+    } else {
+      map.set(v.candidateId, {
+        candidateId: v.candidate.id,
+        name: v.candidate.name,
+        code: v.candidate.code,
+        party: v.candidate.party,
+        totalVotes: v.votes,
+      })
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.totalVotes - a.totalVotes)
+}
+
+/**
+ * NATIONAL aggregation
+ * GET /results/aggregate/national?raceId=xxx
+ */
+app.get('/results/aggregate/national', async (request, reply) => {
+  const { raceId } = request.query as { raceId?: string }
+
+  if (!raceId) {
+    return reply.status(400).send({ error: 'raceId is required' })
+  }
+
+  const results = await prisma.stationResult.findMany({
+    where: { raceId, status: 'SUBMITTED' },
+    include: {
+      votes: {
+        include: {
+          candidate: {
+            select: { id: true, name: true, code: true, party: true },
+          },
+        },
+      },
+    },
+  })
+
+  const allVotes = results.flatMap((r) => r.votes)
+  const candidates = buildCandidateTotals(allVotes)
+
+  const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
+  const totalRejected = results.reduce((sum, r) => sum + (r.rejectedBallots ?? 0), 0)
+  const stationsReported = results.length
+
+  return {
+    data: {
+      level: 'NATIONAL',
+      raceId,
+      stationsReported,
+      totalVoted,
+      totalRejected,
+      candidates,
+    },
+  }
+})
+
+/**
+ * COUNTY aggregation
+ * GET /results/aggregate/county/:countyId?raceId=xxx
+ */
+app.get('/results/aggregate/county/:countyId', async (request, reply) => {
+  const { countyId } = request.params as { countyId: string }
+  const { raceId } = request.query as { raceId?: string }
+
+  if (!raceId) {
+    return reply.status(400).send({ error: 'raceId is required' })
+  }
+
+  const results = await prisma.stationResult.findMany({
+    where: {
+      raceId,
+      status: 'SUBMITTED',
+      pollingStation: {
+        ward: {
+          constituency: {
+            countyId,
+          },
+        },
+      },
+    },
+    include: {
+      votes: {
+        include: {
+          candidate: {
+            select: { id: true, name: true, code: true, party: true },
+          },
+        },
+      },
+      pollingStation: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      },
+    },
+  })
+
+  const allVotes = results.flatMap((r) => r.votes)
+  const candidates = buildCandidateTotals(allVotes)
+
+  const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
+  const totalRejected = results.reduce((sum, r) => sum + (r.rejectedBallots ?? 0), 0)
+
+  return {
+    data: {
+      level: 'COUNTY',
+      countyId,
+      raceId,
+      stationsReported: results.length,
+      totalVoted,
+      totalRejected,
+      candidates,
+    },
+  }
+})
+
+/**
+ * CONSTITUENCY aggregation
+ * GET /results/aggregate/constituency/:constituencyId?raceId=xxx
+ */
+app.get('/results/aggregate/constituency/:constituencyId', async (request, reply) => {
+  const { constituencyId } = request.params as { constituencyId: string }
+  const { raceId } = request.query as { raceId?: string }
+
+  if (!raceId) {
+    return reply.status(400).send({ error: 'raceId is required' })
+  }
+
+  const results = await prisma.stationResult.findMany({
+    where: {
+      raceId,
+      status: 'SUBMITTED',
+      pollingStation: {
+        ward: {
+          constituencyId,
+        },
+      },
+    },
+    include: {
+      votes: {
+        include: {
+          candidate: {
+            select: { id: true, name: true, code: true, party: true },
+          },
+        },
+      },
+    },
+  })
+
+  const allVotes = results.flatMap((r) => r.votes)
+  const candidates = buildCandidateTotals(allVotes)
+
+  const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
+  const totalRejected = results.reduce((sum, r) => sum + (r.rejectedBallots ?? 0), 0)
+
+  return {
+    data: {
+      level: 'CONSTITUENCY',
+      constituencyId,
+      raceId,
+      stationsReported: results.length,
+      totalVoted,
+      totalRejected,
+      candidates,
+    },
+  }
+})
+
+/**
+ * WARD aggregation
+ * GET /results/aggregate/ward/:wardId?raceId=xxx
+ */
+app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
+  const { wardId } = request.params as { wardId: string }
+  const { raceId } = request.query as { raceId?: string }
+
+  if (!raceId) {
+    return reply.status(400).send({ error: 'raceId is required' })
+  }
+
+  const results = await prisma.stationResult.findMany({
+    where: {
+      raceId,
+      status: 'SUBMITTED',
+      pollingStation: {
+        wardId,
+      },
+    },
+    include: {
+      votes: {
+        include: {
+          candidate: {
+            select: { id: true, name: true, code: true, party: true },
+          },
+        },
+      },
+      pollingStation: {
+        select: { id: true, code: true, name: true },
+      },
+    },
+  })
+
+  const allVotes = results.flatMap((r) => r.votes)
+  const candidates = buildCandidateTotals(allVotes)
+
+  const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
+  const totalRejected = results.reduce((sum, r) => sum + (r.rejectedBallots ?? 0), 0)
+
+  return {
+    data: {
+      level: 'WARD',
+      wardId,
+      raceId,
+      stationsReported: results.length,
+      totalVoted,
+      totalRejected,
+      candidates,
+      stations: results.map((r) => ({
+        id: r.pollingStation.id,
+        code: r.pollingStation.code,
+        name: r.pollingStation.name,
+        totalVoted: r.totalVoted,
+      })),
+    },
+  }
+})
 // ======================
 // ROOT
 // ======================
@@ -725,7 +891,11 @@ app.get('/', async () => {
       'GET  /results',
       'GET  /results?raceId=xxx',
       'GET  /results?pollingStationId=xxx',
-      'GET  /results/:id'
+      'GET  /results/:id',
+      'GET  /results/aggregate/national?raceId=xxx',
+      'GET  /results/aggregate/county/:countyId?raceId=xxx',
+      'GET  /results/aggregate/constituency/:constituencyId?raceId=xxx',
+      'GET  /results/aggregate/ward/:wardId?raceId=xxx',
     ]
   }
 })

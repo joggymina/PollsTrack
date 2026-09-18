@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import dotenv from 'dotenv'
 import { prisma } from '@polling/database'
+import authPlugin from './plugins/auth.js'
 
 dotenv.config()
 
@@ -12,6 +13,8 @@ const app = Fastify({
 await app.register(cors, {
   origin: true
 })
+
+await app.register(authPlugin)
 
 // ======================
 // HEALTH & TEST
@@ -38,6 +41,127 @@ app.get('/db-test', async () => {
       status: 'Database error',
       message: error.message
     }
+  }
+})
+
+
+// ======================
+// AUTH
+// ======================
+
+/**
+ * Login with phone number (Kenyan format: 2547XXXXXXXX)
+ * No password for now – OTP can be added later
+ */
+app.post('/auth/login', async (request, reply) => {
+  const body = request.body as { phone?: string }
+
+  if (!body.phone) {
+    return reply.status(400).send({ error: 'phone is required' })
+  }
+
+  // Normalize Kenyan mobile number
+  let phone = body.phone.replace(/\s+/g, '')
+  if (phone.startsWith('07')) phone = '254' + phone.slice(1)
+  if (phone.startsWith('+254')) phone = phone.slice(1)
+
+  const kenyanPhoneRegex = /^2547\d{8}$/
+  if (!kenyanPhoneRegex.test(phone)) {
+    return reply.status(400).send({
+      error: 'Invalid phone number. Use format 2547XXXXXXXX',
+    })
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { phone },
+    select: {
+      id: true,
+      phone: true,
+      name: true,
+      role: true,
+      isActive: true,
+    },
+  })
+
+  if (!user || !user.isActive) {
+    return reply.status(401).send({ error: 'User not found or inactive' })
+  }
+
+  const token = app.jwt.sign({
+    userId: user.id,
+    role: user.role,
+    phone: user.phone,
+  })
+
+  return {
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      phone: user.phone,
+      role: user.role,
+    },
+  }
+})
+
+/**
+ * Get current authenticated user + assigned stations
+ */
+app.get('/me', {
+  preHandler: [app.authenticate],
+}, async (request, reply) => {
+  const userId = request.user.userId
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      role: true,
+      isActive: true,
+      agentAssignments: {
+        select: {
+          pollingStation: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              ward: {
+                select: {
+                  id: true,
+                  name: true,
+                  constituency: {
+                    select: {
+                      id: true,
+                      name: true,
+                      county: {
+                        select: { id: true, name: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+
+  if (!user) {
+    return reply.status(404).send({ error: 'User not found' })
+  }
+
+  return {
+    data: {
+      id: user.id,
+      name: user.name,
+      phone: user.phone,
+      role: user.role,
+      isActive: user.isActive,
+      assignedStations: user.agentAssignments.map((a) => a.pollingStation),
+    },
   }
 })
 
@@ -404,18 +528,21 @@ app.post('/polling-stations', async (request, reply) => {
 })
 
 // ======================
-// RESULTS (CORE FEATURE)
+// RESULTS (CORE FEATURE) - PROTECTED
 // ======================
 
 /**
  * Submit results for a polling station + race
+ * Protected: only authenticated agents can submit
+ * Agent can only submit for stations they are assigned to
  * (No interactive transaction – works with Neon pooler)
  */
-app.post('/results', async (request, reply) => {
+app.post('/results', {
+  preHandler: [app.requireAgent],
+}, async (request, reply) => {
   const body = request.body as {
     pollingStationId: string
     raceId: string
-    submittedById: string
     totalRegistered?: number
     totalVoted?: number
     rejectedBallots?: number
@@ -427,24 +554,43 @@ app.post('/results', async (request, reply) => {
     votes: { candidateId: string; votes: number }[]
   }
 
-  if (!body.pollingStationId || !body.raceId || !body.submittedById || !body.clientSubmittedAt) {
+  // Use the authenticated user – never trust submittedById from client
+  const submittedById = request.user.userId
+
+  if (!body.pollingStationId || !body.raceId || !body.clientSubmittedAt) {
     return reply.status(400).send({
-      error: 'pollingStationId, raceId, submittedById and clientSubmittedAt are required'
+      error: 'pollingStationId, raceId and clientSubmittedAt are required',
     })
   }
 
   if (!Array.isArray(body.votes) || body.votes.length === 0) {
     return reply.status(400).send({
-      error: 'votes array is required and must not be empty'
+      error: 'votes array is required and must not be empty',
     })
   }
 
   for (const v of body.votes) {
     if (!v.candidateId || typeof v.votes !== 'number' || v.votes < 0) {
       return reply.status(400).send({
-        error: 'Each vote must have candidateId and a non-negative votes number'
+        error: 'Each vote must have candidateId and a non-negative votes number',
       })
     }
+  }
+
+  // Security: verify agent is assigned to this station
+  const assignment = await prisma.agentAssignment.findUnique({
+    where: {
+      userId_pollingStationId: {
+        userId: submittedById,
+        pollingStationId: body.pollingStationId,
+      },
+    },
+  })
+
+  if (!assignment) {
+    return reply.status(403).send({
+      error: 'You are not assigned to this polling station',
+    })
   }
 
   try {
@@ -452,7 +598,7 @@ app.post('/results', async (request, reply) => {
       data: {
         pollingStationId: body.pollingStationId,
         raceId: body.raceId,
-        submittedById: body.submittedById,
+        submittedById,
         totalRegistered: body.totalRegistered ?? null,
         totalVoted: body.totalVoted ?? null,
         rejectedBallots: body.rejectedBallots ?? 0,
@@ -490,7 +636,7 @@ app.post('/results', async (request, reply) => {
     try {
       await prisma.auditLog.create({
         data: {
-          userId: body.submittedById,
+          userId: submittedById,
           action: 'RESULT_SUBMITTED',
           entityType: 'StationResult',
           entityId: stationResult.id,
@@ -512,12 +658,12 @@ app.post('/results', async (request, reply) => {
   } catch (error: any) {
     if (error.code === 'P2002') {
       return reply.status(409).send({
-        error: 'Results for this polling station and race have already been submitted'
+        error: 'Results for this polling station and race have already been submitted',
       })
     }
     if (error.code === 'P2003') {
       return reply.status(400).send({
-        error: 'Invalid pollingStationId, raceId, submittedById or candidateId'
+        error: 'Invalid pollingStationId, raceId or candidateId',
       })
     }
     throw error
@@ -868,8 +1014,10 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
 app.get('/', async () => {
   return { 
     message: 'PollsTrack API is running',
-    version: '1.0.0',
+    version: '1.1.0',
     endpoints: [
+      'POST /auth/login',
+      'GET  /me',
       'GET  /health',
       'GET  /db-test',
       'GET  /counties',
@@ -887,7 +1035,7 @@ app.get('/', async () => {
       'GET  /polling-stations?wardId=xxx',
       'GET  /polling-stations/:id',
       'POST /polling-stations',
-      'POST /results',
+      'POST /results          (protected – agent only)',
       'GET  /results',
       'GET  /results?raceId=xxx',
       'GET  /results?pollingStationId=xxx',

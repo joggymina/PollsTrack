@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 
 type Props = {
   intervalSeconds?: number
@@ -11,7 +11,9 @@ export function AutoRefresh({ intervalSeconds = 20 }: Props) {
   const router = useRouter()
   const [secondsLeft, setSecondsLeft] = useState(intervalSeconds)
   const [lastUpdated, setLastUpdated] = useState<string>('')
+  const isRefreshing = useRef(false)
 
+  // Set initial "Last updated" timestamp
   useEffect(() => {
     setLastUpdated(new Date().toLocaleTimeString())
   }, [])
@@ -20,8 +22,16 @@ export function AutoRefresh({ intervalSeconds = 20 }: Props) {
     const countdown = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev <= 1) {
-          router.refresh() // re-fetch server components
-          setLastUpdated(new Date().toLocaleTimeString())
+          // Schedule side-effects AFTER the current render/update finishes
+          // so we never call router.refresh() inside a state updater
+          if (!isRefreshing.current) {
+            isRefreshing.current = true
+            queueMicrotask(() => {
+              router.refresh()
+              setLastUpdated(new Date().toLocaleTimeString())
+              isRefreshing.current = false
+            })
+          }
           return intervalSeconds
         }
         return prev - 1

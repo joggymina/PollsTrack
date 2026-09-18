@@ -21,9 +21,9 @@ await app.register(authPlugin)
 // ======================
 
 app.get('/health', async () => {
-  return { 
-    status: 'ok', 
-    timestamp: new Date().toISOString() 
+  return {
+    status: 'ok',
+    timestamp: new Date().toISOString()
   }
 })
 
@@ -31,66 +31,49 @@ app.get('/db-test', async () => {
   try {
     const countyCount = await prisma.county.count()
     const stationCount = await prisma.pollingStation.count()
-    return { 
+    return {
       status: 'Database connected',
       counties: countyCount,
       pollingStations: stationCount
     }
   } catch (error: any) {
-    return { 
+    return {
       status: 'Database error',
       message: error.message
     }
   }
 })
 
-
 // ======================
 // AUTH
 // ======================
 
-/**
- * Login with phone number (Kenyan format: 2547XXXXXXXX)
- * No password for now – OTP can be added later
- */
 app.post('/auth/login', async (request, reply) => {
   const body = request.body as { phone?: string }
 
-  if (!body.phone) {
+  if (!body.phone || typeof body.phone !== 'string') {
     return reply.status(400).send({ error: 'phone is required' })
   }
 
-  // Normalize Kenyan mobile number
-  let phone = body.phone.replace(/\s+/g, '')
-  if (phone.startsWith('07')) phone = '254' + phone.slice(1)
-  if (phone.startsWith('+254')) phone = phone.slice(1)
-
-  const kenyanPhoneRegex = /^2547\d{8}$/
-  if (!kenyanPhoneRegex.test(phone)) {
-    return reply.status(400).send({
-      error: 'Invalid phone number. Use format 2547XXXXXXXX',
-    })
-  }
+  const phone = body.phone.trim()
 
   const user = await prisma.user.findUnique({
     where: { phone },
-    select: {
-      id: true,
-      phone: true,
-      name: true,
-      role: true,
-      isActive: true,
-    },
   })
 
   if (!user || !user.isActive) {
-    return reply.status(401).send({ error: 'User not found or inactive' })
+    return reply.status(401).send({ error: 'Invalid phone number or account inactive' })
+  }
+
+  if (user.role !== 'AGENT' && user.role !== 'SUPER_ADMIN') {
+    return reply.status(403).send({ error: 'Only agents can use this portal' })
   }
 
   const token = app.jwt.sign({
-    userId: user.id,
-    role: user.role,
+    id: user.id,
     phone: user.phone,
+    name: user.name,
+    role: user.role,
   })
 
   return {
@@ -104,16 +87,17 @@ app.post('/auth/login', async (request, reply) => {
   }
 })
 
-/**
- * Get current authenticated user + assigned stations
- */
+// ======================
+// ME (current agent)
+// ======================
+
 app.get('/me', {
   preHandler: [app.authenticate],
 }, async (request, reply) => {
-  const userId = request.user.userId
+  const payload = request.user as { id: string }
 
   const user = await prisma.user.findUnique({
-    where: { id: userId },
+    where: { id: payload.id },
     select: {
       id: true,
       name: true,
@@ -136,7 +120,10 @@ app.get('/me', {
                       id: true,
                       name: true,
                       county: {
-                        select: { id: true, name: true },
+                        select: {
+                          id: true,
+                          name: true,
+                        },
                       },
                     },
                   },
@@ -149,8 +136,8 @@ app.get('/me', {
     },
   })
 
-  if (!user) {
-    return reply.status(404).send({ error: 'User not found' })
+  if (!user || !user.isActive) {
+    return reply.status(401).send({ error: 'User not found or inactive' })
   }
 
   return {
@@ -163,6 +150,40 @@ app.get('/me', {
       assignedStations: user.agentAssignments.map((a) => a.pollingStation),
     },
   }
+})
+
+// ======================
+// RACES & CANDIDATES
+// ======================
+
+app.get('/races', async () => {
+  const races = await prisma.race.findMany({
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      position: true,
+      scope: true,
+    },
+  })
+  return { data: races }
+})
+
+app.get('/races/:id/candidates', async (request, reply) => {
+  const { id } = request.params as { id: string }
+
+  const candidates = await prisma.candidate.findMany({
+    where: { raceId: id, isActive: true },
+    orderBy: { name: 'asc' },
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      party: true,
+      raceId: true,
+    },
+  })
+
+  return { data: candidates }
 })
 
 // ======================
@@ -281,15 +302,15 @@ app.get('/constituencies/:id', async (request, reply) => {
 })
 
 app.post('/constituencies', async (request, reply) => {
-  const body = request.body as { 
+  const body = request.body as {
     code: string
     name: string
-    countyId: string 
+    countyId: string
   }
 
   if (!body.code || !body.name || !body.countyId) {
-    return reply.status(400).send({ 
-      error: 'code, name and countyId are required' 
+    return reply.status(400).send({
+      error: 'code, name and countyId are required'
     })
   }
 
@@ -528,14 +549,12 @@ app.post('/polling-stations', async (request, reply) => {
 })
 
 // ======================
-// RESULTS (CORE FEATURE) - PROTECTED
+// RESULTS (CORE FEATURE)
 // ======================
 
 /**
  * Submit results for a polling station + race
- * Protected: only authenticated agents can submit
- * Agent can only submit for stations they are assigned to
- * (No interactive transaction – works with Neon pooler)
+ * Uses JWT authenticated agent (no submittedById in body)
  */
 app.post('/results', {
   preHandler: [app.requireAgent],
@@ -554,8 +573,7 @@ app.post('/results', {
     votes: { candidateId: string; votes: number }[]
   }
 
-  // Use the authenticated user – never trust submittedById from client
-  const submittedById = request.user.userId
+  const user = request.user as { id: string; role: string }
 
   if (!body.pollingStationId || !body.raceId || !body.clientSubmittedAt) {
     return reply.status(400).send({
@@ -577,17 +595,15 @@ app.post('/results', {
     }
   }
 
-  // Security: verify agent is assigned to this station
-  const assignment = await prisma.agentAssignment.findUnique({
+  // Check the agent is assigned to this station
+  const assignment = await prisma.agentAssignment.findFirst({
     where: {
-      userId_pollingStationId: {
-        userId: submittedById,
-        pollingStationId: body.pollingStationId,
-      },
+      userId: user.id,
+      pollingStationId: body.pollingStationId,
     },
   })
 
-  if (!assignment) {
+  if (!assignment && user.role !== 'SUPER_ADMIN') {
     return reply.status(403).send({
       error: 'You are not assigned to this polling station',
     })
@@ -598,7 +614,7 @@ app.post('/results', {
       data: {
         pollingStationId: body.pollingStationId,
         raceId: body.raceId,
-        submittedById,
+        submittedById: user.id,
         totalRegistered: body.totalRegistered ?? null,
         totalVoted: body.totalVoted ?? null,
         rejectedBallots: body.rejectedBallots ?? 0,
@@ -636,7 +652,7 @@ app.post('/results', {
     try {
       await prisma.auditLog.create({
         data: {
-          userId: submittedById,
+          userId: user.id,
           action: 'RESULT_SUBMITTED',
           entityType: 'StationResult',
           entityId: stationResult.id,
@@ -765,13 +781,11 @@ app.get('/results/:id', async (request, reply) => {
 
   return { data: result }
 })
+
 // ======================
 // AGGREGATION (REAL-TIME TOTALS)
 // ======================
 
-/**
- * Helper: build candidate totals from a list of ResultVotes
- */
 function buildCandidateTotals(votes: { candidateId: string; votes: number; candidate: { id: string; name: string; code: string | null; party: string | null } }[]) {
   const map = new Map<string, { candidateId: string; name: string; code: string | null; party: string | null; totalVotes: number }>()
 
@@ -793,10 +807,6 @@ function buildCandidateTotals(votes: { candidateId: string; votes: number; candi
   return Array.from(map.values()).sort((a, b) => b.totalVotes - a.totalVotes)
 }
 
-/**
- * NATIONAL aggregation
- * GET /results/aggregate/national?raceId=xxx
- */
 app.get('/results/aggregate/national', async (request, reply) => {
   const { raceId } = request.query as { raceId?: string }
 
@@ -836,10 +846,6 @@ app.get('/results/aggregate/national', async (request, reply) => {
   }
 })
 
-/**
- * COUNTY aggregation
- * GET /results/aggregate/county/:countyId?raceId=xxx
- */
 app.get('/results/aggregate/county/:countyId', async (request, reply) => {
   const { countyId } = request.params as { countyId: string }
   const { raceId } = request.query as { raceId?: string }
@@ -897,10 +903,6 @@ app.get('/results/aggregate/county/:countyId', async (request, reply) => {
   }
 })
 
-/**
- * CONSTITUENCY aggregation
- * GET /results/aggregate/constituency/:constituencyId?raceId=xxx
- */
 app.get('/results/aggregate/constituency/:constituencyId', async (request, reply) => {
   const { constituencyId } = request.params as { constituencyId: string }
   const { raceId } = request.query as { raceId?: string }
@@ -949,10 +951,6 @@ app.get('/results/aggregate/constituency/:constituencyId', async (request, reply
   }
 })
 
-/**
- * WARD aggregation
- * GET /results/aggregate/ward/:wardId?raceId=xxx
- */
 app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
   const { wardId } = request.params as { wardId: string }
   const { raceId } = request.query as { raceId?: string }
@@ -1007,19 +1005,22 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
     },
   }
 })
+
 // ======================
 // ROOT
 // ======================
 
 app.get('/', async () => {
-  return { 
+  return {
     message: 'PollsTrack API is running',
-    version: '1.1.0',
+    version: '1.0.0',
     endpoints: [
-      'POST /auth/login',
-      'GET  /me',
       'GET  /health',
       'GET  /db-test',
+      'POST /auth/login',
+      'GET  /me',
+      'GET  /races',
+      'GET  /races/:id/candidates',
       'GET  /counties',
       'GET  /counties/:id',
       'POST /counties',
@@ -1035,7 +1036,7 @@ app.get('/', async () => {
       'GET  /polling-stations?wardId=xxx',
       'GET  /polling-stations/:id',
       'POST /polling-stations',
-      'POST /results          (protected – agent only)',
+      'POST /results',
       'GET  /results',
       'GET  /results?raceId=xxx',
       'GET  /results?pollingStationId=xxx',

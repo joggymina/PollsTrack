@@ -29,15 +29,54 @@ export type Race = {
   position: string
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
+export type Candidate = {
+  id: string
+  name: string
+  code: string | null
+  party: string | null
+  raceId: string
+}
+
+export type AssignedStation = {
+  id: string
+  code: string
+  name: string
+  ward: {
+    id: string
+    name: string
+    constituency: {
+      id: string
+      name: string
+      county: {
+        id: string
+        name: string
+      }
+    }
+  }
+}
+
+export type MeResponse = {
+  id: string
+  name: string
+  phone: string
+  role: string
+  isActive: boolean
+  assignedStations: AssignedStation[]
+}
+
+async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
-    cache: 'no-store', // always get fresh data for live dashboard
+    cache: 'no-store',
+    ...options,
   })
   if (!res.ok) {
-    throw new Error(`API error: ${res.status}`)
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `API error: ${res.status}`)
   }
   return res.json()
 }
+
+// ---------- Public dashboard helpers ----------
 
 export async function getNationalAggregate(raceId: string): Promise<AggregateResult> {
   const data = await fetchJson<{ data: AggregateResult }>(
@@ -61,15 +100,65 @@ export async function getCounties(): Promise<County[]> {
   return data.data
 }
 
-// For now we hardcode or fetch the first available race
-// Later we can add a proper races endpoint
 export async function getRaces(): Promise<Race[]> {
-  // Temporary: return the known race from your seed data
-  // You can later add GET /races to the API
-  return [
-    {
-      id: 'cmu5rxtlu0001v8vj5p0cfcix',
-      position: 'Member of County Assembly',
+  try {
+    const data = await fetchJson<{ data: Race[] }>('/races')
+    return data.data
+  } catch {
+    // Fallback for older API without /races
+    return [
+      {
+        id: 'cmu5rxtlu0001v8vj5p0cfcix',
+        position: 'Member of County Assembly',
+      },
+    ]
+  }
+}
+
+export async function getCandidates(raceId: string): Promise<Candidate[]> {
+  const data = await fetchJson<{ data: Candidate[] }>(
+    `/races/${raceId}/candidates`
+  )
+  return data.data
+}
+
+// ---------- Auth + Agent helpers ----------
+
+export async function login(phone: string): Promise<{ token: string; user: { id: string; name: string; phone: string; role: string } }> {
+  return fetchJson('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone }),
+  })
+}
+
+export async function getMe(token: string): Promise<MeResponse> {
+  const data = await fetchJson<{ data: MeResponse }>('/me', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  return data.data
+}
+
+export type SubmitResultsPayload = {
+  pollingStationId: string
+  raceId: string
+  totalRegistered?: number
+  totalVoted?: number
+  rejectedBallots?: number
+  clientSubmittedAt: string
+  votes: { candidateId: string; votes: number }[]
+}
+
+export async function submitResults(
+  token: string,
+  payload: SubmitResultsPayload
+) {
+  return fetchJson('/results', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
     },
-  ]
+    body: JSON.stringify(payload),
+  })
 }

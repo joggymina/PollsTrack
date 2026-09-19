@@ -4,7 +4,7 @@ import { StatsCards } from '@/components/StatsCards'
 import { CandidateRanking } from '@/components/CandidateRanking'
 import { AutoRefresh } from '@/components/AutoRefresh'
 
-export const dynamic = 'force-dynamic' // always fresh data
+export const dynamic = 'force-dynamic'
 
 export default async function NationalPage() {
   const races = await getRaces()
@@ -39,12 +39,10 @@ export default async function NationalPage() {
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Candidate Ranking */}
         <div className="lg:col-span-2">
           <CandidateRanking candidates={aggregate.candidates} />
         </div>
 
-        {/* Counties list */}
         <div className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100">
             <h2 className="text-lg font-semibold text-gray-900">Counties</h2>

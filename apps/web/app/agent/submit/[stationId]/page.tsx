@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, FormEvent } from 'react'
+import { useEffect, useState, FormEvent, ChangeEvent } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -12,9 +12,9 @@ import {
   type Race,
   type Candidate,
 } from '@/lib/api'
-import { getToken, clearAuth, isLoggedIn } from '@/lib/auth'
+import { getToken, getUser, clearAuth, isLoggedIn } from '@/lib/auth'
+import { addToQueue } from '@/lib/offline-queue'
 
-// Shared input styles for visibility
 const inputClass =
   'w-full px-4 py-3 text-lg text-gray-900 bg-white border border-gray-300 rounded-xl placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none'
 
@@ -37,11 +37,14 @@ export default function SubmitResultsPage() {
   const [totalVoted, setTotalVoted] = useState('')
   const [totalRegistered, setTotalRegistered] = useState('')
   const [rejectedBallots, setRejectedBallots] = useState('0')
+  const [formPhoto, setFormPhoto] = useState<string | null>(null)
+  const [photoName, setPhotoName] = useState('')
 
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
+  const [offlineSaved, setOfflineSaved] = useState(false)
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -105,13 +108,38 @@ export default function SubmitResultsPage() {
     }
   }
 
+  function onPhotoChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose an image file')
+      return
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Photo must be under 2MB')
+      return
+    }
+
+    setError('')
+    const reader = new FileReader()
+    reader.onload = () => {
+      setFormPhoto(reader.result as string)
+      setPhotoName(file.name)
+    }
+    reader.readAsDataURL(file)
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
     setSubmitting(true)
+    setOfflineSaved(false)
 
     const token = getToken()
-    if (!token || !station || !selectedRaceId) return
+    const user = getUser()
+    if (!token || !user || !station || !selectedRaceId) return
 
     try {
       for (const c of candidates) {
@@ -120,7 +148,7 @@ export default function SubmitResultsPage() {
         }
       }
 
-      await submitResults(token, {
+      const payload = {
         pollingStationId: station.id,
         raceId: selectedRaceId,
         totalRegistered: totalRegistered
@@ -131,13 +159,31 @@ export default function SubmitResultsPage() {
           ? parseInt(rejectedBallots, 10)
           : 0,
         clientSubmittedAt: new Date().toISOString(),
+        formPhotoUrl: formPhoto || undefined,
         votes: candidates.map((c) => ({
           candidateId: c.id,
           votes: parseInt(votes[c.id] || '0', 10),
         })),
-      })
+      }
 
-      setSuccess(true)
+      try {
+        await submitResults(token, payload)
+        setSuccess(true)
+      } catch (err: any) {
+        const isNetworkError =
+          !navigator.onLine ||
+          err.message?.includes('Failed to fetch') ||
+          err.message?.includes('NetworkError') ||
+          err.message?.includes('network') ||
+          err.message?.includes('fetch')
+
+        if (isNetworkError || !navigator.onLine) {
+          addToQueue(payload, station.name, user.id)
+          setOfflineSaved(true)
+        } else {
+          throw err
+        }
+      }
     } catch (err: any) {
       setError(err.message || 'Submission failed')
     } finally {
@@ -151,21 +197,41 @@ export default function SubmitResultsPage() {
     )
   }
 
-  if (success) {
+  if (success || offlineSaved) {
     return (
       <div className="max-w-lg mx-auto text-center py-12">
-        <div className="bg-green-50 border border-green-100 rounded-2xl p-8">
-          <div className="text-4xl mb-3">✓</div>
-          <h2 className="text-xl font-bold text-green-800">
-            Results Submitted
+        <div
+          className={`rounded-2xl p-8 border ${
+            offlineSaved
+              ? 'bg-amber-50 border-amber-100'
+              : 'bg-green-50 border-green-100'
+          }`}
+        >
+          <div className="text-4xl mb-3">{offlineSaved ? '📦' : '✓'}</div>
+          <h2
+            className={`text-xl font-bold ${
+              offlineSaved ? 'text-amber-800' : 'text-green-800'
+            }`}
+          >
+            {offlineSaved ? 'Saved Offline' : 'Results Submitted'}
           </h2>
-          <p className="text-green-600 mt-2">
-            {station?.name} results have been recorded successfully.
+          <p
+            className={`mt-2 ${
+              offlineSaved ? 'text-amber-700' : 'text-green-600'
+            }`}
+          >
+            {offlineSaved
+              ? `${station?.name} results were saved on this device. They will sync automatically when you are back online.`
+              : `${station?.name} results have been recorded successfully.`}
           </p>
           <div className="mt-6 space-y-3">
             <Link
               href="/agent"
-              className="block w-full py-3.5 font-semibold text-white bg-green-600 rounded-xl hover:bg-green-700"
+              className={`block w-full py-3.5 font-semibold text-white rounded-xl ${
+                offlineSaved
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-green-600 hover:bg-green-700'
+              }`}
             >
               Back to My Stations
             </Link>
@@ -188,7 +254,6 @@ export default function SubmitResultsPage() {
 
   return (
     <div className="max-w-lg mx-auto">
-      {/* Header */}
       <div className="mb-6">
         <Link
           href="/agent"
@@ -203,7 +268,6 @@ export default function SubmitResultsPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Race selector */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5">
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Race / Position
@@ -223,7 +287,6 @@ export default function SubmitResultsPage() {
           </select>
         </div>
 
-        {/* Turnout numbers */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
           <h3 className="font-semibold text-gray-900">Turnout</h3>
 
@@ -272,7 +335,6 @@ export default function SubmitResultsPage() {
           </div>
         </div>
 
-        {/* Candidate votes */}
         {candidates.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
             <h3 className="font-semibold text-gray-900">Candidate Votes</h3>
@@ -299,6 +361,43 @@ export default function SubmitResultsPage() {
             ))}
           </div>
         )}
+
+        {/* Optional form photo */}
+        <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3">
+          <h3 className="font-semibold text-gray-900">Form photo (optional)</h3>
+          <p className="text-sm text-gray-500">
+            Take or upload a photo of the official results form (max 2MB).
+          </p>
+
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={onPhotoChange}
+            className="block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700"
+          />
+
+          {formPhoto && (
+            <div className="space-y-2">
+              <p className="text-xs text-gray-500 truncate">{photoName}</p>
+              <img
+                src={formPhoto}
+                alt="Form preview"
+                className="w-full max-h-48 object-contain rounded-xl border border-gray-100"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setFormPhoto(null)
+                  setPhotoName('')
+                }}
+                className="text-sm text-red-600"
+              >
+                Remove photo
+              </button>
+            </div>
+          )}
+        </div>
 
         {error && (
           <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl">

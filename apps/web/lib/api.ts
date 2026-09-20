@@ -64,6 +64,13 @@ export type MeResponse = {
   assignedStations: AssignedStation[]
 }
 
+export type StationResultSummary = {
+  id: string
+  pollingStationId: string
+  raceId: string
+  status: string
+}
+
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     cache: 'no-store',
@@ -105,7 +112,6 @@ export async function getRaces(): Promise<Race[]> {
     const data = await fetchJson<{ data: Race[] }>('/races')
     return data.data
   } catch {
-    // Fallback for older API without /races
     return [
       {
         id: 'cmu5rxtlu0001v8vj5p0cfcix',
@@ -122,9 +128,19 @@ export async function getCandidates(raceId: string): Promise<Candidate[]> {
   return data.data
 }
 
+export async function getResults(): Promise<StationResultSummary[]> {
+  const data = await fetchJson<{ data: StationResultSummary[] }>('/results')
+  return data.data
+}
+
 // ---------- Auth + Agent helpers ----------
 
-export async function login(phone: string): Promise<{ token: string; user: { id: string; name: string; phone: string; role: string } }> {
+export async function login(
+  phone: string
+): Promise<{
+  token: string
+  user: { id: string; name: string; phone: string; role: string }
+}> {
   return fetchJson('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -146,6 +162,7 @@ export type SubmitResultsPayload = {
   totalVoted?: number
   rejectedBallots?: number
   clientSubmittedAt: string
+  formPhotoUrl?: string
   votes: { candidateId: string; votes: number }[]
 }
 

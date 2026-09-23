@@ -71,6 +71,22 @@ export type StationResultSummary = {
   status: string
 }
 
+export type AdminAgent = {
+  id: string
+  name: string
+  phone: string
+  role: string
+  isActive: boolean
+  createdAt?: string
+  stations: { id: string; code: string; name: string }[]
+}
+
+export type PollingStationOption = {
+  id: string
+  code: string
+  name: string
+}
+
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     cache: 'no-store',
@@ -85,7 +101,9 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
 
 // ---------- Public dashboard helpers ----------
 
-export async function getNationalAggregate(raceId: string): Promise<AggregateResult> {
+export async function getNationalAggregate(
+  raceId: string
+): Promise<AggregateResult> {
   const data = await fetchJson<{ data: AggregateResult }>(
     `/results/aggregate/national?raceId=${raceId}`
   )
@@ -133,6 +151,13 @@ export async function getResults(): Promise<StationResultSummary[]> {
   return data.data
 }
 
+export async function getPollingStations(): Promise<PollingStationOption[]> {
+  const data = await fetchJson<{ data: PollingStationOption[] }>(
+    '/polling-stations'
+  )
+  return data.data
+}
+
 // ---------- Auth + Agent helpers ----------
 
 export async function login(
@@ -177,5 +202,42 @@ export async function submitResults(
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
+  })
+}
+
+// ---------- Admin helpers ----------
+
+export async function getAdminAgents(token: string): Promise<AdminAgent[]> {
+  const data = await fetchJson<{ data: AdminAgent[] }>('/admin/agents', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  return data.data
+}
+
+export async function createAdminAgent(
+  token: string,
+  body: { phone: string; name: string; role?: string }
+) {
+  return fetchJson<{ data: AdminAgent }>('/admin/agents', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function assignStation(
+  token: string,
+  body: { userId: string; pollingStationId: string }
+) {
+  return fetchJson('/admin/assignments', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
   })
 }

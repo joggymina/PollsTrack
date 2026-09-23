@@ -1007,6 +1007,151 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
 })
 
 // ======================
+// ADMIN
+// ======================
+
+app.get(
+  '/admin/agents',
+  {
+    preHandler: [app.requireSuperAdmin],
+  },
+  async () => {
+    const agents = await prisma.user.findMany({
+      where: { role: { in: ['AGENT', 'SUPER_ADMIN'] } },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        agentAssignments: {
+          select: {
+            pollingStation: {
+              select: { id: true, code: true, name: true },
+            },
+          },
+        },
+      },
+    })
+
+    return {
+      data: agents.map((a) => ({
+        id: a.id,
+        name: a.name,
+        phone: a.phone,
+        role: a.role,
+        isActive: a.isActive,
+        createdAt: a.createdAt,
+        stations: a.agentAssignments.map((x) => x.pollingStation),
+      })),
+    }
+  }
+)
+
+app.post(
+  '/admin/agents',
+  {
+    preHandler: [app.requireSuperAdmin],
+  },
+  async (request, reply) => {
+    const body = request.body as {
+      phone?: string
+      name?: string
+      role?: string
+    }
+
+    if (!body.phone || !body.name) {
+      return reply.status(400).send({ error: 'phone and name are required' })
+    }
+
+    const phone = body.phone.trim()
+    const role = body.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : 'AGENT'
+
+    try {
+      const user = await prisma.user.create({
+        data: {
+          phone,
+          name: body.name.trim(),
+          role,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          role: true,
+          isActive: true,
+        },
+      })
+      return reply.status(201).send({ data: user })
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return reply
+          .status(409)
+          .send({ error: 'Phone number already registered' })
+      }
+      throw error
+    }
+  }
+)
+
+app.post(
+  '/admin/assignments',
+  {
+    preHandler: [app.requireSuperAdmin],
+  },
+  async (request, reply) => {
+    const body = request.body as {
+      userId?: string
+      pollingStationId?: string
+    }
+
+    if (!body.userId || !body.pollingStationId) {
+      return reply.status(400).send({
+        error: 'userId and pollingStationId are required',
+      })
+    }
+
+    const existing = await prisma.agentAssignment.findFirst({
+      where: {
+        userId: body.userId,
+        pollingStationId: body.pollingStationId,
+      },
+    })
+
+    if (existing) {
+      return reply
+        .status(409)
+        .send({ error: 'Agent already assigned to this station' })
+    }
+
+    try {
+      const assignment = await prisma.agentAssignment.create({
+        data: {
+          userId: body.userId,
+          pollingStationId: body.pollingStationId,
+        },
+        include: {
+          pollingStation: {
+            select: { id: true, code: true, name: true },
+          },
+        },
+      })
+      return reply.status(201).send({ data: assignment })
+    } catch (error: any) {
+      if (error.code === 'P2003') {
+        return reply
+          .status(400)
+          .send({ error: 'Invalid userId or pollingStationId' })
+      }
+      throw error
+    }
+  }
+)
+
+// ======================
 // ROOT
 // ======================
 
@@ -1045,6 +1190,9 @@ app.get('/', async () => {
       'GET  /results/aggregate/county/:countyId?raceId=xxx',
       'GET  /results/aggregate/constituency/:constituencyId?raceId=xxx',
       'GET  /results/aggregate/ward/:wardId?raceId=xxx',
+      'GET  /admin/agents',
+      'POST /admin/agents',
+      'POST /admin/assignments',
     ]
   }
 })

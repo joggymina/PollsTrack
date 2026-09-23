@@ -3,7 +3,7 @@
 import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { login } from '@/lib/api'
-import { setAuth, isLoggedIn } from '@/lib/auth'
+import { setAuth, isLoggedIn, getUser } from '@/lib/auth'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -12,7 +12,12 @@ export default function LoginPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (isLoggedIn()) {
+    if (!isLoggedIn()) return
+
+    const user = getUser()
+    if (user?.role === 'SUPER_ADMIN') {
+      router.replace('/admin')
+    } else {
       router.replace('/agent')
     }
   }, [router])
@@ -23,9 +28,15 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const result = await login(phone.trim())
+      const digits = phone.replace(/\D/g, '')
+      const result = await login(digits)
       setAuth(result.token, result.user)
-      router.replace('/agent')
+
+      if (result.user.role === 'SUPER_ADMIN') {
+        router.replace('/admin')
+      } else {
+        router.replace('/agent')
+      }
     } catch (err: any) {
       setError(err.message || 'Login failed')
     } finally {
@@ -33,11 +44,14 @@ export default function LoginPage() {
     }
   }
 
+  const digitsOnly = phone.replace(/\D/g, '')
+  const canSubmit = digitsOnly.length >= 10 && !loading
+
   return (
     <div className="min-h-[70vh] flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Agent Login</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Login</h1>
           <p className="text-gray-500 mt-2">
             Enter your registered phone number
           </p>
@@ -58,10 +72,11 @@ export default function LoginPage() {
               id="phone"
               type="tel"
               inputMode="numeric"
+              pattern="[0-9]*"
               placeholder="2547XXXXXXXX"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="w-full px-4 py-3.5 text-lg border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+              className="w-full px-4 py-3.5 text-lg text-gray-900 bg-white border border-gray-300 rounded-xl placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
               required
               autoComplete="tel"
               autoFocus
@@ -79,15 +94,19 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading || phone.length < 10}
+            disabled={!canSubmit}
             className="w-full py-4 text-lg font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading ? 'Signing in…' : 'Sign In'}
+            {loading
+              ? 'Signing in…'
+              : digitsOnly.length < 10
+                ? `Enter phone (${digitsOnly.length}/10)`
+                : 'Sign In'}
           </button>
         </form>
 
         <p className="text-center text-sm text-gray-400 mt-6">
-          Only authorised polling agents can access this area.
+          Agents and admins use the same login.
         </p>
       </div>
     </div>

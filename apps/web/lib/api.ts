@@ -87,6 +87,20 @@ export type PollingStationOption = {
   name: string
 }
 
+export type ConstituencyOption = {
+  id: string
+  code: string
+  name: string
+  countyId: string
+}
+
+export type WardOption = {
+  id: string
+  code: string
+  name: string
+  constituencyId: string
+}
+
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     cache: 'no-store',
@@ -125,6 +139,34 @@ export async function getCounties(): Promise<County[]> {
   return data.data
 }
 
+export async function getConstituencies(
+  countyId?: string
+): Promise<ConstituencyOption[]> {
+  const q = countyId ? `?countyId=${countyId}` : ''
+  const data = await fetchJson<{ data: ConstituencyOption[] }>(
+    `/constituencies${q}`
+  )
+  return data.data
+}
+
+export async function getWards(
+  constituencyId?: string
+): Promise<WardOption[]> {
+  const q = constituencyId ? `?constituencyId=${constituencyId}` : ''
+  const data = await fetchJson<{ data: WardOption[] }>(`/wards${q}`)
+  return data.data
+}
+
+export async function getPollingStations(
+  wardId?: string
+): Promise<PollingStationOption[]> {
+  const q = wardId ? `?wardId=${wardId}` : ''
+  const data = await fetchJson<{ data: PollingStationOption[] }>(
+    `/polling-stations${q}`
+  )
+  return data.data
+}
+
 export async function getRaces(): Promise<Race[]> {
   try {
     const data = await fetchJson<{ data: Race[] }>('/races')
@@ -148,13 +190,6 @@ export async function getCandidates(raceId: string): Promise<Candidate[]> {
 
 export async function getResults(): Promise<StationResultSummary[]> {
   const data = await fetchJson<{ data: StationResultSummary[] }>('/results')
-  return data.data
-}
-
-export async function getPollingStations(): Promise<PollingStationOption[]> {
-  const data = await fetchJson<{ data: PollingStationOption[] }>(
-    '/polling-stations'
-  )
   return data.data
 }
 

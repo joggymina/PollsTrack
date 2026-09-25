@@ -22,7 +22,7 @@ model County {
 
 model Constituency {
   id        String   @id @default(cuid())
-  code      String   @unique
+  code      String
   name      String
   countyId  String
   county    County   @relation(fields: [countyId], references: [id])
@@ -30,12 +30,13 @@ model Constituency {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([countyId, code])
   @@index([countyId])
 }
 
 model Ward {
   id              String           @id @default(cuid())
-  code            String           @unique
+  code            String
   name            String
   constituencyId  String
   constituency    Constituency     @relation(fields: [constituencyId], references: [id])
@@ -43,6 +44,7 @@ model Ward {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
+  @@unique([constituencyId, code])
   @@index([constituencyId])
 }
 
@@ -108,15 +110,15 @@ model AgentAssignment {
 // ======================
 
 model Election {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   name      String
   type      String
-  status    String   @default("DRAFT")
+  status    String    @default("DRAFT")
   startDate DateTime?
   endDate   DateTime?
   races     Race[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 }
 
 model Race {
@@ -135,17 +137,17 @@ model Race {
 }
 
 model Candidate {
-  id       String       @id @default(cuid())
-  raceId   String
-  race     Race         @relation(fields: [raceId], references: [id])
-  name     String
-  code     String?
-  party    String?
-  photoUrl String?
-  isActive Boolean      @default(true)
-  votes    ResultVote[]
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  id        String       @id @default(cuid())
+  raceId    String
+  race      Race         @relation(fields: [raceId], references: [id])
+  name      String
+  code      String?
+  party     String?
+  photoUrl  String?
+  isActive  Boolean      @default(true)
+  votes     ResultVote[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 }
 
 // ======================
@@ -153,26 +155,26 @@ model Candidate {
 // ======================
 
 model StationResult {
-  id               String       @id @default(cuid())
-  pollingStationId String
-  pollingStation   PollingStation @relation(fields: [pollingStationId], references: [id])
-  raceId           String
-  race             Race         @relation(fields: [raceId], references: [id])
-  submittedById    String
-  submittedBy      User         @relation(fields: [submittedById], references: [id])
-  totalRegistered  Int?
-  totalVoted       Int?
-  rejectedBallots  Int          @default(0)
-  formPhotoUrl     String?
-  formPhotoHash    String?
+  id                String          @id @default(cuid())
+  pollingStationId  String
+  pollingStation    PollingStation  @relation(fields: [pollingStationId], references: [id])
+  raceId            String
+  race              Race            @relation(fields: [raceId], references: [id])
+  submittedById     String
+  submittedBy       User            @relation(fields: [submittedById], references: [id])
+  totalRegistered   Int?
+  totalVoted        Int?
+  rejectedBallots   Int             @default(0)
+  formPhotoUrl      String?
+  formPhotoHash     String?
   clientSubmittedAt DateTime
-  serverReceivedAt DateTime     @default(now())
-  isOffline        Boolean      @default(false)
-  deviceInfo       Json?
-  status           String       @default("SUBMITTED")
-  votes            ResultVote[]
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  serverReceivedAt  DateTime        @default(now())
+  isOffline         Boolean         @default(false)
+  deviceInfo        Json?
+  status            String          @default("SUBMITTED")
+  votes             ResultVote[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
   @@unique([pollingStationId, raceId])
   @@index([pollingStationId])

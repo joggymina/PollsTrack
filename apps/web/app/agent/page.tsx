@@ -51,7 +51,6 @@ export default function AdminAgentsPage() {
   const [selectedStation, setSelectedStation] =
     useState<PollingStationOption | null>(null)
 
-  const [loadingCounties, setLoadingCounties] = useState(false)
   const [loadingStep, setLoadingStep] = useState(false)
   const [assigning, setAssigning] = useState(false)
 
@@ -60,7 +59,6 @@ export default function AdminAgentsPage() {
     setAgents(await getAdminAgents(token))
   }
 
-  // Auth + agents first (page usable quickly)
   useEffect(() => {
     if (!isLoggedIn()) {
       router.replace('/login')
@@ -71,22 +69,11 @@ export default function AdminAgentsPage() {
       return
     }
 
-    loadAgents()
+    Promise.all([loadAgents(), getCounties()])
+      .then(([, list]) => setCounties(list))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [router])
-
-  // Counties in background after page is shown
-  useEffect(() => {
-    if (loading) return
-    if (counties.length > 0) return
-
-    setLoadingCounties(true)
-    getCounties()
-      .then(setCounties)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoadingCounties(false))
-  }, [loading, counties.length])
 
   async function pickCounty(c: County) {
     setSelectedCounty(c)
@@ -208,14 +195,13 @@ export default function AdminAgentsPage() {
     setAssigning(true)
     try {
       const token = getToken()!
-      const stationName = selectedStation.name
       await assignStation(token, {
         userId: assignUserId,
         pollingStationId: selectedStation.id,
       })
       setAssignUserId('')
       resetLocation()
-      setMessage(`Assigned: ${stationName}`)
+      setMessage(`Assigned: ${selectedStation.name}`)
       await loadAgents()
     } catch (err: any) {
       setError(err.message || 'Assign failed')
@@ -249,7 +235,6 @@ export default function AdminAgentsPage() {
           <h1 className="text-xl font-bold text-gray-900 mt-1">Agents</h1>
         </div>
         <button
-          type="button"
           onClick={() => {
             clearAuth()
             router.replace('/login')
@@ -331,6 +316,7 @@ export default function AdminAgentsPage() {
             ))}
         </select>
 
+        {/* Breadcrumb + back */}
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-gray-500 truncate flex-1">
             {breadcrumb || 'Choose a county'}
@@ -346,27 +332,24 @@ export default function AdminAgentsPage() {
           )}
         </div>
 
-        {(loadingStep || (step === 'county' && loadingCounties)) && (
+        {loadingStep && (
           <p className="text-sm text-gray-400 py-4 text-center">Loading…</p>
         )}
 
-        {!loadingStep && !loadingCounties && step === 'county' && (
+        {/* Step lists — only current level rendered */}
+        {!loadingStep && step === 'county' && (
           <div className="max-h-64 overflow-y-auto rounded-xl border border-gray-100 divide-y divide-gray-50">
-            {counties.length === 0 ? (
-              <p className="px-4 py-3 text-sm text-gray-400">No counties found</p>
-            ) : (
-              counties.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => pickCounty(c)}
-                  className="w-full text-left px-4 py-3 hover:bg-blue-50 active:bg-blue-100"
-                >
-                  <span className="font-medium text-gray-900">{c.name}</span>
-                  <span className="text-xs text-gray-400 ml-2">{c.code}</span>
-                </button>
-              ))
-            )}
+            {counties.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => pickCounty(c)}
+                className="w-full text-left px-4 py-3 hover:bg-blue-50 active:bg-blue-100"
+              >
+                <span className="font-medium text-gray-900">{c.name}</span>
+                <span className="text-xs text-gray-400 ml-2">{c.code}</span>
+              </button>
+            ))}
           </div>
         )}
 

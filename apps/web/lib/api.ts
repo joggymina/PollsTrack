@@ -277,3 +277,23 @@ export async function assignStation(
     body: JSON.stringify(body),
   })
 }
+
+export async function getConstituencyAggregate(
+  constituencyId: string,
+  raceId: string
+): Promise<AggregateResult> {
+  const data = await fetchJson<{ data: AggregateResult }>(
+    `/results/aggregate/constituency/${constituencyId}?raceId=${raceId}`
+  )
+  return data.data
+}
+
+export async function getWardAggregate(
+  wardId: string,
+  raceId: string
+): Promise<AggregateResult> {
+  const data = await fetchJson<{ data: AggregateResult }>(
+    `/results/aggregate/ward/${wardId}?raceId=${raceId}`
+  )
+  return data.data
+}

@@ -32,7 +32,6 @@ export default async function ConstituencyPage({ params, searchParams }: Props) 
     )
   }
 
-  // We need countyId for breadcrumb – fetch constituencies without filter then find
   const [aggregate, allConstituencies, wards, counties] = await Promise.all([
     getConstituencyAggregate(constituencyId, raceId),
     getConstituencies(),

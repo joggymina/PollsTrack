@@ -1,5 +1,7 @@
 import Link from 'next/link'
+import { Suspense } from 'react'
 import { getNationalAggregate, getCounties, getRaces } from '@/lib/api'
+import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
 import { StatsCards } from '@/components/StatsCards'
 import { CandidateRanking } from '@/components/CandidateRanking'
 import { AutoRefresh } from '@/components/AutoRefresh'
@@ -13,13 +15,16 @@ type Props = {
 
 export default async function NationalPage({ searchParams }: Props) {
   const { raceId: raceIdParam } = await searchParams
-  const races = await getRaces()
-  const raceId = raceIdParam || races[0]?.id
+  const allRaces = await getRaces()
 
-  if (!raceId) {
+  // National level → President only
+  const races = filterRacesForLevel(allRaces, 'national')
+  const raceId = pickDefaultRaceId(allRaces, 'national', raceIdParam)
+
+  if (!raceId || races.length === 0) {
     return (
       <div className="text-center py-20 text-gray-500">
-        No races found. Please seed an election first.
+        No national races found. Seed a President race first.
       </div>
     )
   }
@@ -33,7 +38,9 @@ export default async function NationalPage({ searchParams }: Props) {
     <div>
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-900">National Overview</h2>
-        <RaceSelector races={races} currentRaceId={raceId} />
+        <Suspense fallback={<p className="text-gray-500 mt-1">Loading…</p>}>
+          <RaceSelector races={races} currentRaceId={raceId} />
+        </Suspense>
       </div>
 
       <StatsCards

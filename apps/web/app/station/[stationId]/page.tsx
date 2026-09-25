@@ -1,15 +1,15 @@
 import Link from 'next/link'
+import { Suspense } from 'react'
 import {
   getStationResult,
   getPollingStations,
-  getWards,
-  getConstituencies,
-  getCounties,
   getRaces,
 } from '@/lib/api'
+import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
 import { StatsCards } from '@/components/StatsCards'
 import { CandidateRanking } from '@/components/CandidateRanking'
 import { AutoRefresh } from '@/components/AutoRefresh'
+import { RaceSelector } from '@/components/RaceSelector'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,8 +22,10 @@ export default async function StationPage({ params, searchParams }: Props) {
   const { stationId } = await params
   const { raceId: raceIdParam } = await searchParams
 
-  const races = await getRaces()
-  const raceId = raceIdParam || races[0]?.id
+  const allRaces = await getRaces()
+  // Station → all races
+  const races = filterRacesForLevel(allRaces, 'station')
+  const raceId = pickDefaultRaceId(allRaces, 'station', raceIdParam)
 
   if (!raceId) {
     return (
@@ -33,22 +35,16 @@ export default async function StationPage({ params, searchParams }: Props) {
     )
   }
 
-  const [result, allStations, allWards, allConstituencies, counties] =
-    await Promise.all([
-      getStationResult(stationId, raceId),
-      getPollingStations(),
-      getWards(),
-      getConstituencies(),
-      getCounties(),
-    ])
+  const [result, allStations] = await Promise.all([
+    getStationResult(stationId, raceId),
+    getPollingStations(),
+  ])
 
   const station = allStations.find((s) => s.id === stationId)
-  // We may not have wardId on the list type – result has pollingStation name
-  const race = races.find((r) => r.id === raceId) || races[0]
 
   const candidates =
     result?.votes
-      .map((v) => ({
+      ?.map((v) => ({
         candidateId: v.candidate.id,
         name: v.candidate.name,
         code: v.candidate.code,
@@ -61,7 +57,7 @@ export default async function StationPage({ params, searchParams }: Props) {
     <div>
       <div className="mb-6">
         <div className="flex flex-wrap items-center gap-2 text-sm text-blue-600 mb-2">
-          <Link href={raceId ? `/?raceId=${raceId}` : '/'} className="hover:underline">
+          <Link href={`/?raceId=${raceId}`} className="hover:underline">
             National
           </Link>
           <span className="text-gray-400">→</span>
@@ -71,11 +67,12 @@ export default async function StationPage({ params, searchParams }: Props) {
         </div>
 
         <h2 className="text-2xl font-bold text-gray-900">
-          {result?.pollingStation?.name || station?.name || 'Polling Station'} Results
+          {result?.pollingStation?.name || station?.name || 'Polling Station'}{' '}
+          Results
         </h2>
-        <p className="text-gray-500 mt-1">
-          {race?.position || 'Election'} · Station-level results
-        </p>
+        <Suspense fallback={<p className="text-gray-500 mt-1">Loading…</p>}>
+          <RaceSelector races={races} currentRaceId={raceId} />
+        </Suspense>
       </div>
 
       {!result ? (
@@ -100,7 +97,11 @@ export default async function StationPage({ params, searchParams }: Props) {
           <p className="mt-4 text-sm text-gray-500">
             Status: <span className="font-medium">{result.status}</span>
             {result.serverReceivedAt && (
-              <> · Received {new Date(result.serverReceivedAt).toLocaleString()}</>
+              <>
+                {' '}
+                · Received{' '}
+                {new Date(result.serverReceivedAt).toLocaleString()}
+              </>
             )}
           </p>
         </>

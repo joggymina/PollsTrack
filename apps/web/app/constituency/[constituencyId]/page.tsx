@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { Suspense } from 'react'
 import {
   getConstituencyAggregate,
   getConstituencies,
@@ -6,9 +7,11 @@ import {
   getCounties,
   getRaces,
 } from '@/lib/api'
+import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
 import { StatsCards } from '@/components/StatsCards'
 import { CandidateRanking } from '@/components/CandidateRanking'
 import { AutoRefresh } from '@/components/AutoRefresh'
+import { RaceSelector } from '@/components/RaceSelector'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,8 +24,10 @@ export default async function ConstituencyPage({ params, searchParams }: Props) 
   const { constituencyId } = await params
   const { raceId: raceIdParam } = await searchParams
 
-  const races = await getRaces()
-  const raceId = raceIdParam || races[0]?.id
+  const allRaces = await getRaces()
+  // Constituency → President + Governor + Senator + Woman Rep + MP
+  const races = filterRacesForLevel(allRaces, 'constituency')
+  const raceId = pickDefaultRaceId(allRaces, 'constituency', raceIdParam)
 
   if (!raceId) {
     return (
@@ -41,13 +46,12 @@ export default async function ConstituencyPage({ params, searchParams }: Props) 
 
   const constituency = allConstituencies.find((c) => c.id === constituencyId)
   const county = counties.find((c) => c.id === constituency?.countyId)
-  const race = races.find((r) => r.id === raceId) || races[0]
 
   return (
     <div>
       <div className="mb-6">
         <div className="flex flex-wrap items-center gap-2 text-sm text-blue-600 mb-2">
-          <Link href={raceId ? `/?raceId=${raceId}` : '/'} className="hover:underline">
+          <Link href={`/?raceId=${raceId}`} className="hover:underline">
             National
           </Link>
           <span className="text-gray-400">→</span>
@@ -62,15 +66,17 @@ export default async function ConstituencyPage({ params, searchParams }: Props) 
               <span className="text-gray-400">→</span>
             </>
           )}
-          <span className="text-gray-600">{constituency?.name || 'Constituency'}</span>
+          <span className="text-gray-600">
+            {constituency?.name || 'Constituency'}
+          </span>
         </div>
 
         <h2 className="text-2xl font-bold text-gray-900">
           {constituency?.name || 'Constituency'} Results
         </h2>
-        <p className="text-gray-500 mt-1">
-          {race?.position || 'Election'} · Live results
-        </p>
+        <Suspense fallback={<p className="text-gray-500 mt-1">Loading…</p>}>
+          <RaceSelector races={races} currentRaceId={raceId} />
+        </Suspense>
       </div>
 
       <StatsCards

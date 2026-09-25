@@ -27,6 +27,7 @@ export type County = {
 export type Race = {
   id: string
   position: string
+  scope?: string | null
 }
 
 export type Candidate = {

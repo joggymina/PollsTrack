@@ -1,13 +1,16 @@
 import Link from 'next/link'
+import { Suspense } from 'react'
 import {
   getCountyAggregate,
   getCounties,
   getConstituencies,
   getRaces,
 } from '@/lib/api'
+import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
 import { StatsCards } from '@/components/StatsCards'
 import { CandidateRanking } from '@/components/CandidateRanking'
 import { AutoRefresh } from '@/components/AutoRefresh'
+import { RaceSelector } from '@/components/RaceSelector'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,8 +23,10 @@ export default async function CountyPage({ params, searchParams }: Props) {
   const { countyId } = await params
   const { raceId: raceIdParam } = await searchParams
 
-  const races = await getRaces()
-  const raceId = raceIdParam || races[0]?.id
+  const allRaces = await getRaces()
+  // County level → President + Governor + Senator + Woman Rep
+  const races = filterRacesForLevel(allRaces, 'county')
+  const raceId = pickDefaultRaceId(allRaces, 'county', raceIdParam)
 
   if (!raceId) {
     return (
@@ -38,23 +43,24 @@ export default async function CountyPage({ params, searchParams }: Props) {
   ])
 
   const county = counties.find((c) => c.id === countyId)
-  const race = races.find((r) => r.id === raceId) || races[0]
 
   return (
     <div>
       <div className="mb-6">
-        <Link
-          href={raceId ? `/?raceId=${raceId}` : '/'}
-          className="text-sm text-blue-600 hover:underline mb-2 inline-block"
-        >
-          ← Back to National
-        </Link>
+        <div className="flex flex-wrap items-center gap-2 text-sm text-blue-600 mb-2">
+          <Link href={`/?raceId=${raceId}`} className="hover:underline">
+            National
+          </Link>
+          <span className="text-gray-400">→</span>
+          <span className="text-gray-600">{county?.name || 'County'}</span>
+        </div>
+
         <h2 className="text-2xl font-bold text-gray-900">
           {county?.name || 'County'} Results
         </h2>
-        <p className="text-gray-500 mt-1">
-          {race?.position || 'Election'} · Live results
-        </p>
+        <Suspense fallback={<p className="text-gray-500 mt-1">Loading…</p>}>
+          <RaceSelector races={races} currentRaceId={raceId} />
+        </Suspense>
       </div>
 
       <StatsCards

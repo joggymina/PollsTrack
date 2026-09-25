@@ -5,6 +5,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 type Race = {
   id: string
   position: string
+  scope?: string | null
 }
 
 export function RaceSelector({
@@ -18,7 +19,13 @@ export function RaceSelector({
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  if (races.length <= 1) {
+  if (races.length === 0) {
+    return (
+      <p className="text-gray-500 mt-1">No races available at this level</p>
+    )
+  }
+
+  if (races.length === 1) {
     return (
       <p className="text-gray-500 mt-1">
         {races[0]?.position || 'Election'} · Live results

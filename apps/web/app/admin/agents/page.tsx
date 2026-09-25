@@ -8,44 +8,57 @@ import {
   createAdminAgent,
   assignStation,
   unassignStation,
+  getCounties,
+  getConstituencies,
+  getWards,
   getPollingStations,
   type AdminAgent,
+  type County,
+  type ConstituencyOption,
+  type WardOption,
   type PollingStationOption,
 } from '@/lib/api'
 import { getToken, getUser, isLoggedIn, clearAuth } from '@/lib/auth'
 
+type Tab = 'create' | 'assign' | 'list'
+
 export default function AdminAgentsPage() {
   const router = useRouter()
+  const [tab, setTab] = useState<Tab>('list')
   const [agents, setAgents] = useState<AdminAgent[]>([])
-  const [stations, setStations] = useState<PollingStationOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  // Search / filter
+  // List tab
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'assigned' | 'unassigned'>('all')
-  const [stationSearch, setStationSearch] = useState('')
+  const [unassigningKey, setUnassigningKey] = useState<string | null>(null)
 
-  // Create agent
+  // Create tab
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [creating, setCreating] = useState(false)
 
-  // Assign
+  // Assign tab – cascade
   const [assignUserId, setAssignUserId] = useState('')
+  const [counties, setCounties] = useState<County[]>([])
+  const [countySearch, setCountySearch] = useState('')
+  const [selectedCounty, setSelectedCounty] = useState<County | null>(null)
+  const [constituencies, setConstituencies] = useState<ConstituencyOption[]>([])
+  const [selectedConstituency, setSelectedConstituency] =
+    useState<ConstituencyOption | null>(null)
+  const [wards, setWards] = useState<WardOption[]>([])
+  const [selectedWard, setSelectedWard] = useState<WardOption | null>(null)
+  const [stations, setStations] = useState<PollingStationOption[]>([])
   const [assignStationId, setAssignStationId] = useState('')
   const [assigning, setAssigning] = useState(false)
-  const [unassigningKey, setUnassigningKey] = useState<string | null>(null)
+  const [cascadeLoading, setCascadeLoading] = useState(false)
 
-  async function load() {
+  async function loadAgents() {
     const token = getToken()!
-    const [agentList, stationList] = await Promise.all([
-      getAdminAgents(token),
-      getPollingStations().catch(() => [] as PollingStationOption[]),
-    ])
-    setAgents(agentList)
-    setStations(stationList)
+    const list = await getAdminAgents(token)
+    setAgents(list)
   }
 
   useEffect(() => {
@@ -58,12 +71,13 @@ export default function AdminAgentsPage() {
       return
     }
 
-    load()
+    Promise.all([loadAgents(), getCounties()])
+      .then(([, countyList]) => setCounties(countyList))
       .catch((err) => setError(err.message || 'Failed to load'))
       .finally(() => setLoading(false))
   }, [router])
 
-  // stationId → list of agents already on it
+  // ---- Derived ----
   const stationAssignees = useMemo(() => {
     const map = new Map<string, { id: string; name: string }[]>()
     for (const a of agents) {
@@ -80,24 +94,21 @@ export default function AdminAgentsPage() {
     ? stationAssignees.get(assignStationId) || []
     : []
 
-  const filteredStations = useMemo(() => {
-    const q = stationSearch.trim().toLowerCase()
-    if (!q) return stations
-    return stations.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.code.toLowerCase().includes(q)
+  const filteredCounties = useMemo(() => {
+    const q = countySearch.trim().toLowerCase()
+    if (!q) return counties
+    return counties.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q)
     )
-  }, [stations, stationSearch])
+  }, [counties, countySearch])
 
   const filteredAgents = useMemo(() => {
     let list = agents
     const q = search.trim().toLowerCase()
     if (q) {
       list = list.filter(
-        (a) =>
-          a.name.toLowerCase().includes(q) ||
-          a.phone.includes(q)
+        (a) => a.name.toLowerCase().includes(q) || a.phone.includes(q)
       )
     }
     if (filter === 'assigned') {
@@ -111,18 +122,87 @@ export default function AdminAgentsPage() {
     return list
   }, [agents, search, filter])
 
-  const assignedCount = agents.filter((a) => (a.stations?.length || 0) > 0).length
+  const assignedCount = agents.filter((a) => (a.stations?.length || 0) > 0)
+    .length
   const unassignedCount = agents.filter(
     (a) => a.role === 'AGENT' && (a.stations?.length || 0) === 0
   ).length
 
+  // ---- Cascade handlers ----
+  async function pickCounty(c: County) {
+    setSelectedCounty(c)
+    setSelectedConstituency(null)
+    setSelectedWard(null)
+    setStations([])
+    setAssignStationId('')
+    setCascadeLoading(true)
+    try {
+      const list = await getConstituencies(c.id)
+      setConstituencies(list)
+    } catch (err: any) {
+      setError(err.message || 'Failed to load constituencies')
+    } finally {
+      setCascadeLoading(false)
+    }
+  }
+
+  async function pickConstituency(c: ConstituencyOption) {
+    setSelectedConstituency(c)
+    setSelectedWard(null)
+    setStations([])
+    setAssignStationId('')
+    setCascadeLoading(true)
+    try {
+      const list = await getWards(c.id)
+      setWards(list)
+    } catch (err: any) {
+      setError(err.message || 'Failed to load wards')
+    } finally {
+      setCascadeLoading(false)
+    }
+  }
+
+  async function pickWard(w: WardOption) {
+    setSelectedWard(w)
+    setAssignStationId('')
+    setCascadeLoading(true)
+    try {
+      const list = await getPollingStations(w.id)
+      setStations(list)
+    } catch (err: any) {
+      setError(err.message || 'Failed to load stations')
+    } finally {
+      setCascadeLoading(false)
+    }
+  }
+
+  function cascadeBack() {
+    if (selectedWard) {
+      setSelectedWard(null)
+      setStations([])
+      setAssignStationId('')
+      return
+    }
+    if (selectedConstituency) {
+      setSelectedConstituency(null)
+      setWards([])
+      return
+    }
+    if (selectedCounty) {
+      setSelectedCounty(null)
+      setConstituencies([])
+      return
+    }
+  }
+
+  // ---- Actions ----
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     setError('')
     setMessage('')
     const cleaned = phone.replace(/\D/g, '')
     if (!/^2547\d{8}$/.test(cleaned)) {
-      setError('Phone must be Kenyan format: 2547XXXXXXXX (12 digits)')
+      setError('Phone must be 2547XXXXXXXX (12 digits)')
       return
     }
     setCreating(true)
@@ -136,7 +216,8 @@ export default function AdminAgentsPage() {
       setName('')
       setPhone('')
       setMessage('Agent created')
-      await load()
+      await loadAgents()
+      setTab('list')
     } catch (err: any) {
       setError(err.message || 'Create failed')
     } finally {
@@ -154,11 +235,11 @@ export default function AdminAgentsPage() {
     const station = stations.find((s) => s.id === assignStationId)
     const others = selectedAssignees.filter((x) => x.id !== assignUserId)
 
-    let confirmMsg = `Assign "${station?.name || 'station'}" to ${agent?.name || 'agent'}?`
+    let msg = `Assign "${station?.name || 'station'}" to ${agent?.name || 'agent'}?`
     if (others.length > 0) {
-      confirmMsg += `\n\nAlready assigned to: ${others.map((o) => o.name).join(', ')}`
+      msg += `\n\nAlready assigned to: ${others.map((o) => o.name).join(', ')}`
     }
-    if (!window.confirm(confirmMsg)) return
+    if (!window.confirm(msg)) return
 
     setAssigning(true)
     try {
@@ -167,11 +248,9 @@ export default function AdminAgentsPage() {
         userId: assignUserId,
         pollingStationId: assignStationId,
       })
-      setAssignUserId('')
       setAssignStationId('')
-      setStationSearch('')
       setMessage('Station assigned')
-      await load()
+      await loadAgents()
     } catch (err: any) {
       setError(err.message || 'Assign failed')
     } finally {
@@ -184,7 +263,7 @@ export default function AdminAgentsPage() {
     stationId: string,
     stationName: string
   ) {
-    if (!window.confirm(`Unassign "${stationName}" from this agent?`)) return
+    if (!window.confirm(`Unassign "${stationName}"?`)) return
     setError('')
     setMessage('')
     const key = `${userId}-${stationId}`
@@ -193,7 +272,7 @@ export default function AdminAgentsPage() {
       const token = getToken()!
       await unassignStation(token, { userId, pollingStationId: stationId })
       setMessage('Station unassigned')
-      await load()
+      await loadAgents()
     } catch (err: any) {
       setError(err.message || 'Unassign failed')
     } finally {
@@ -207,8 +286,15 @@ export default function AdminAgentsPage() {
     )
   }
 
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'create', label: 'Create' },
+    { id: 'assign', label: 'Assign' },
+    { id: 'list', label: 'List' },
+  ]
+
   return (
-    <div className="max-w-lg mx-auto space-y-6">
+    <div className="max-w-lg mx-auto space-y-5">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <Link href="/admin" className="text-sm text-blue-600 hover:underline">
@@ -232,6 +318,28 @@ export default function AdminAgentsPage() {
         </button>
       </div>
 
+      {/* Tabs */}
+      <div className="flex rounded-xl border border-gray-200 bg-white p-1">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => {
+              setTab(t.id)
+              setError('')
+              setMessage('')
+            }}
+            className={`flex-1 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+              tab === t.id
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {error && (
         <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl">
           {error}
@@ -243,201 +351,320 @@ export default function AdminAgentsPage() {
         </div>
       )}
 
-      {/* Create agent */}
-      <form
-        onSubmit={handleCreate}
-        className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3"
-      >
-        <h2 className="font-semibold text-gray-900">Create agent</h2>
-        <input
-          type="text"
-          placeholder="Full name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-          className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <input
-          type="tel"
-          inputMode="numeric"
-          placeholder="2547XXXXXXXX"
-          value={phone}
-          onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
-          required
-          className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          type="submit"
-          disabled={creating || phone.length < 12}
-          className="w-full py-3 font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"
+      {/* ===== CREATE ===== */}
+      {tab === 'create' && (
+        <form
+          onSubmit={handleCreate}
+          className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3"
         >
-          {creating ? 'Creating…' : 'Create agent'}
-        </button>
-      </form>
-
-      {/* Assign station */}
-      <form
-        onSubmit={handleAssign}
-        className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3"
-      >
-        <h2 className="font-semibold text-gray-900">Assign station</h2>
-
-        <select
-          value={assignUserId}
-          onChange={(e) => setAssignUserId(e.target.value)}
-          required
-          className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">Select agent…</option>
-          {agents
-            .filter((a) => a.role === 'AGENT')
-            .map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.phone}) · {a.stations?.length || 0} station
-                {(a.stations?.length || 0) === 1 ? '' : 's'}
-              </option>
-            ))}
-        </select>
-
-        <input
-          type="search"
-          placeholder="Search station by name or code…"
-          value={stationSearch}
-          onChange={(e) => setStationSearch(e.target.value)}
-          className="w-full px-4 py-2.5 text-sm text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-        />
-
-        <select
-          value={assignStationId}
-          onChange={(e) => setAssignStationId(e.target.value)}
-          required
-          className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">Select station…</option>
-          {filteredStations.map((s) => {
-            const assignees = stationAssignees.get(s.id) || []
-            const tag =
-              assignees.length > 0
-                ? ` · assigned: ${assignees.map((x) => x.name).join(', ')}`
-                : ''
-            return (
-              <option key={s.id} value={s.id}>
-                {s.name} ({s.code}){tag}
-              </option>
-            )
-          })}
-        </select>
-
-        {selectedAssignees.length > 0 && (
-          <div className="bg-amber-50 text-amber-800 text-sm px-3 py-2 rounded-xl">
-            Already assigned to:{' '}
-            <strong>{selectedAssignees.map((a) => a.name).join(', ')}</strong>
-          </div>
-        )}
-
-        <button
-          type="submit"
-          disabled={assigning || !assignUserId || !assignStationId}
-          className="w-full py-3 font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"
-        >
-          {assigning ? 'Assigning…' : 'Assign station'}
-        </button>
-      </form>
-
-      {/* Search + filter agents */}
-      <div className="space-y-2">
-        <input
-          type="search"
-          placeholder="Search agents by name or phone…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <div className="flex gap-2">
-          {(['all', 'assigned', 'unassigned'] as const).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 text-sm rounded-lg border ${
-                filter === f
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-600 border-gray-200'
-              }`}
-            >
-              {f === 'all' ? 'All' : f === 'assigned' ? 'Assigned' : 'Unassigned'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Agent list */}
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-          Agents ({filteredAgents.length})
-        </h2>
-        {filteredAgents.length === 0 && (
-          <p className="text-sm text-gray-500 text-center py-6">
-            No agents match
-          </p>
-        )}
-        {filteredAgents.map((a) => (
-          <div
-            key={a.id}
-            className="bg-white rounded-2xl border border-gray-100 p-4"
+          <h2 className="font-semibold text-gray-900">Create agent</h2>
+          <input
+            type="text"
+            placeholder="Full name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <input
+            type="tel"
+            inputMode="numeric"
+            placeholder="2547XXXXXXXX"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+            required
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            type="submit"
+            disabled={creating || phone.length < 12}
+            className="w-full py-3 font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"
           >
-            <div className="flex justify-between items-start">
-              <div>
-                <p className="font-semibold text-gray-900">{a.name}</p>
-                <p className="text-sm text-gray-500">{a.phone}</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {a.stations?.length || 0} station
+            {creating ? 'Creating…' : 'Create agent'}
+          </button>
+        </form>
+      )}
+
+      {/* ===== ASSIGN ===== */}
+      {tab === 'assign' && (
+        <form
+          onSubmit={handleAssign}
+          className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3"
+        >
+          <h2 className="font-semibold text-gray-900">Assign station</h2>
+          <p className="text-xs text-gray-500">
+            County → Constituency → Ward → Station
+          </p>
+
+          <select
+            value={assignUserId}
+            onChange={(e) => setAssignUserId(e.target.value)}
+            required
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">Select agent…</option>
+            {agents
+              .filter((a) => a.role === 'AGENT')
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.phone}) · {a.stations?.length || 0} station
                   {(a.stations?.length || 0) === 1 ? '' : 's'}
-                </p>
+                </option>
+              ))}
+          </select>
+
+          {/* Breadcrumb + back */}
+          {(selectedCounty || selectedConstituency || selectedWard) && (
+            <div className="flex items-center justify-between text-sm">
+              <p className="text-blue-700 font-medium truncate">
+                {[
+                  selectedCounty?.name,
+                  selectedConstituency?.name,
+                  selectedWard?.name,
+                ]
+                  .filter(Boolean)
+                  .join(' → ')}
+              </p>
+              <button
+                type="button"
+                onClick={cascadeBack}
+                className="text-blue-600 hover:underline shrink-0 ml-2"
+              >
+                ← Back
+              </button>
+            </div>
+          )}
+
+          {/* Level: counties */}
+          {!selectedCounty && (
+            <>
+              <input
+                type="search"
+                placeholder="Search county…"
+                value={countySearch}
+                onChange={(e) => setCountySearch(e.target.value)}
+                className="w-full px-4 py-2.5 text-sm text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 border border-gray-100 rounded-xl">
+                {filteredCounties.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => pickCounty(c)}
+                    className="w-full text-left px-4 py-3 hover:bg-blue-50 flex justify-between"
+                  >
+                    <span className="font-medium text-gray-900">{c.name}</span>
+                    <span className="text-sm text-gray-400">{c.code}</span>
+                  </button>
+                ))}
               </div>
-              <span
-                className={`text-xs font-medium px-2 py-1 rounded-lg ${
-                  a.role === 'SUPER_ADMIN'
-                    ? 'bg-purple-50 text-purple-700'
-                    : 'bg-blue-50 text-blue-700'
+            </>
+          )}
+
+          {/* Level: constituencies */}
+          {selectedCounty && !selectedConstituency && (
+            <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 border border-gray-100 rounded-xl">
+              {cascadeLoading ? (
+                <p className="px-4 py-3 text-sm text-gray-500">Loading…</p>
+              ) : constituencies.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-gray-500">None found</p>
+              ) : (
+                constituencies.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => pickConstituency(c)}
+                    className="w-full text-left px-4 py-3 hover:bg-blue-50 flex justify-between"
+                  >
+                    <span className="font-medium text-gray-900">{c.name}</span>
+                    <span className="text-sm text-gray-400">{c.code}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Level: wards */}
+          {selectedConstituency && !selectedWard && (
+            <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 border border-gray-100 rounded-xl">
+              {cascadeLoading ? (
+                <p className="px-4 py-3 text-sm text-gray-500">Loading…</p>
+              ) : wards.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-gray-500">None found</p>
+              ) : (
+                wards.map((w) => (
+                  <button
+                    key={w.id}
+                    type="button"
+                    onClick={() => pickWard(w)}
+                    className="w-full text-left px-4 py-3 hover:bg-blue-50 flex justify-between"
+                  >
+                    <span className="font-medium text-gray-900">{w.name}</span>
+                    <span className="text-sm text-gray-400">{w.code}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Level: stations */}
+          {selectedWard && (
+            <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 border border-gray-100 rounded-xl">
+              {cascadeLoading ? (
+                <p className="px-4 py-3 text-sm text-gray-500">Loading…</p>
+              ) : stations.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-gray-500">None found</p>
+              ) : (
+                stations.map((s) => {
+                  const assignees = stationAssignees.get(s.id) || []
+                  const selected = assignStationId === s.id
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setAssignStationId(s.id)}
+                      className={`w-full text-left px-4 py-3 hover:bg-blue-50 ${
+                        selected ? 'bg-blue-50 ring-1 ring-inset ring-blue-300' : ''
+                      }`}
+                    >
+                      <div className="flex justify-between gap-2">
+                        <span className="font-medium text-gray-900">
+                          {s.name}
+                        </span>
+                        <span className="text-sm text-gray-400 shrink-0">
+                          {s.code}
+                        </span>
+                      </div>
+                      {assignees.length > 0 && (
+                        <p className="text-xs text-amber-700 mt-0.5">
+                          Assigned: {assignees.map((a) => a.name).join(', ')}
+                        </p>
+                      )}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          )}
+
+          {selectedAssignees.length > 0 && assignStationId && (
+            <div className="bg-amber-50 text-amber-800 text-sm px-3 py-2 rounded-xl">
+              Already assigned to:{' '}
+              <strong>
+                {selectedAssignees.map((a) => a.name).join(', ')}
+              </strong>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={assigning || !assignUserId || !assignStationId}
+            className="w-full py-3 font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"
+          >
+            {assigning ? 'Assigning…' : 'Assign station'}
+          </button>
+        </form>
+      )}
+
+      {/* ===== LIST ===== */}
+      {tab === 'list' && (
+        <div className="space-y-3">
+          <input
+            type="search"
+            placeholder="Search by name or phone…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <div className="flex gap-2">
+            {(['all', 'assigned', 'unassigned'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 text-sm rounded-lg border ${
+                  filter === f
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-600 border-gray-200'
                 }`}
               >
-                {a.role}
-              </span>
-            </div>
-            {(a.stations?.length || 0) > 0 && (
-              <div className="mt-3 pt-3 border-t border-gray-50">
-                <p className="text-xs text-gray-400 mb-1">Stations</p>
-                <ul className="text-sm text-gray-700 space-y-2">
-                  {(a.stations || []).map((s) => (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between gap-2"
-                    >
-                      <span>
-                        {s.name}{' '}
-                        <span className="text-gray-400">({s.code})</span>
-                      </span>
-                      {a.role === 'AGENT' && (
-                        <button
-                          type="button"
-                          onClick={() => handleUnassign(a.id, s.id, s.name)}
-                          disabled={unassigningKey === `${a.id}-${s.id}`}
-                          className="text-xs text-red-600 hover:underline disabled:opacity-50 shrink-0"
-                        >
-                          {unassigningKey === `${a.id}-${s.id}`
-                            ? '…'
-                            : 'Unassign'}
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+                {f === 'all'
+                  ? 'All'
+                  : f === 'assigned'
+                    ? 'Assigned'
+                    : 'Unassigned'}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
+
+          {filteredAgents.length === 0 && (
+            <p className="text-sm text-gray-500 text-center py-8">
+              No agents match
+            </p>
+          )}
+
+          {filteredAgents.map((a) => (
+            <div
+              key={a.id}
+              className="bg-white rounded-2xl border border-gray-100 p-4"
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="font-semibold text-gray-900">{a.name}</p>
+                  <p className="text-sm text-gray-500">{a.phone}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {a.stations?.length || 0} station
+                    {(a.stations?.length || 0) === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <span
+                  className={`text-xs font-medium px-2 py-1 rounded-lg ${
+                    a.role === 'SUPER_ADMIN'
+                      ? 'bg-purple-50 text-purple-700'
+                      : 'bg-blue-50 text-blue-700'
+                  }`}
+                >
+                  {a.role}
+                </span>
+              </div>
+              {(a.stations?.length || 0) > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-50">
+                  <p className="text-xs text-gray-400 mb-1">Stations</p>
+                  <ul className="text-sm text-gray-700 space-y-2">
+                    {(a.stations || []).map((s) => (
+                      <li
+                        key={s.id}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <span>
+                          {s.name}{' '}
+                          <span className="text-gray-400">({s.code})</span>
+                        </span>
+                        {a.role === 'AGENT' && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleUnassign(a.id, s.id, s.name)
+                            }
+                            disabled={
+                              unassigningKey === `${a.id}-${s.id}`
+                            }
+                            className="text-xs text-red-600 hover:underline disabled:opacity-50 shrink-0"
+                          >
+                            {unassigningKey === `${a.id}-${s.id}`
+                              ? '…'
+                              : 'Unassign'}
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

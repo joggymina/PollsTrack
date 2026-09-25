@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { Suspense } from 'react'
 import {
   getStationResult,
-  getPollingStations,
+  getPollingStation,
   getRaces,
 } from '@/lib/api'
 import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
@@ -23,7 +23,6 @@ export default async function StationPage({ params, searchParams }: Props) {
   const { raceId: raceIdParam } = await searchParams
 
   const allRaces = await getRaces()
-  // Station → all races
   const races = filterRacesForLevel(allRaces, 'station')
   const raceId = pickDefaultRaceId(allRaces, 'station', raceIdParam)
 
@@ -35,12 +34,16 @@ export default async function StationPage({ params, searchParams }: Props) {
     )
   }
 
-  const [result, allStations] = await Promise.all([
+  const [result, station] = await Promise.all([
     getStationResult(stationId, raceId),
-    getPollingStations(),
+    getPollingStation(stationId),
   ])
 
-  const station = allStations.find((s) => s.id === stationId)
+  const ward = station?.ward
+  const constituency = ward?.constituency
+  const county = constituency?.county
+  const stationName =
+    result?.pollingStation?.name || station?.name || 'Polling Station'
 
   const candidates =
     result?.votes
@@ -56,19 +59,54 @@ export default async function StationPage({ params, searchParams }: Props) {
   return (
     <div>
       <div className="mb-6">
+        {/* Full breadcrumb – same style as ward/constituency pages */}
         <div className="flex flex-wrap items-center gap-2 text-sm text-blue-600 mb-2">
           <Link href={`/?raceId=${raceId}`} className="hover:underline">
             National
           </Link>
           <span className="text-gray-400">→</span>
-          <span className="text-gray-600">
-            {result?.pollingStation?.name || station?.name || 'Polling Station'}
-          </span>
+
+          {county && (
+            <>
+              <Link
+                href={`/county/${county.id}?raceId=${raceId}`}
+                className="hover:underline"
+              >
+                {county.name}
+              </Link>
+              <span className="text-gray-400">→</span>
+            </>
+          )}
+
+          {constituency && (
+            <>
+              <Link
+                href={`/constituency/${constituency.id}?raceId=${raceId}`}
+                className="hover:underline"
+              >
+                {constituency.name}
+              </Link>
+              <span className="text-gray-400">→</span>
+            </>
+          )}
+
+          {ward && (
+            <>
+              <Link
+                href={`/ward/${ward.id}?raceId=${raceId}`}
+                className="hover:underline"
+              >
+                {ward.name}
+              </Link>
+              <span className="text-gray-400">→</span>
+            </>
+          )}
+
+          <span className="text-gray-600">{stationName}</span>
         </div>
 
         <h2 className="text-2xl font-bold text-gray-900">
-          {result?.pollingStation?.name || station?.name || 'Polling Station'}{' '}
-          Results
+          {stationName} Results
         </h2>
         <Suspense fallback={<p className="text-gray-500 mt-1">Loading…</p>}>
           <RaceSelector races={races} currentRaceId={raceId} />

@@ -343,3 +343,39 @@ export async function assignStation(
     body: JSON.stringify(body),
   })
 }
+
+export type PollingStationDetail = {
+  id: string
+  code: string
+  name: string
+  registeredVoters: number | null
+  wardId: string
+  ward: {
+    id: string
+    code: string
+    name: string
+    constituency: {
+      id: string
+      code: string
+      name: string
+      county: {
+        id: string
+        code: string
+        name: string
+      }
+    }
+  }
+}
+
+export async function getPollingStation(
+  id: string
+): Promise<PollingStationDetail | null> {
+  try {
+    const data = await fetchJson<{ data: PollingStationDetail }>(
+      `/polling-stations/${id}`
+    )
+    return data.data
+  } catch {
+    return null
+  }
+}

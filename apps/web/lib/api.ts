@@ -102,6 +102,37 @@ export type WardOption = {
   constituencyId: string
 }
 
+export type StationResultDetail = {
+  id: string
+  pollingStationId: string
+  raceId: string
+  totalRegistered: number | null
+  totalVoted: number | null
+  rejectedBallots: number | null
+  status: string
+  clientSubmittedAt: string | null
+  serverReceivedAt: string | null
+  votes: {
+    candidateId: string
+    votes: number
+    candidate: {
+      id: string
+      name: string
+      code: string | null
+      party: string | null
+    }
+  }[]
+  pollingStation: {
+    id: string
+    code: string
+    name: string
+  }
+  race: {
+    id: string
+    position: string
+  }
+}
+
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     cache: 'no-store',
@@ -133,6 +164,40 @@ export async function getCountyAggregate(
     `/results/aggregate/county/${countyId}?raceId=${raceId}`
   )
   return data.data
+}
+
+export async function getConstituencyAggregate(
+  constituencyId: string,
+  raceId: string
+): Promise<AggregateResult> {
+  const data = await fetchJson<{ data: AggregateResult }>(
+    `/results/aggregate/constituency/${constituencyId}?raceId=${raceId}`
+  )
+  return data.data
+}
+
+export async function getWardAggregate(
+  wardId: string,
+  raceId: string
+): Promise<AggregateResult> {
+  const data = await fetchJson<{ data: AggregateResult }>(
+    `/results/aggregate/ward/${wardId}?raceId=${raceId}`
+  )
+  return data.data
+}
+
+export async function getStationResult(
+  stationId: string,
+  raceId: string
+): Promise<StationResultDetail | null> {
+  try {
+    const data = await fetchJson<{ data: StationResultDetail[] }>(
+      `/results?pollingStationId=${stationId}&raceId=${raceId}`
+    )
+    return data.data?.[0] || null
+  } catch {
+    return null
+  }
 }
 
 export async function getCounties(): Promise<County[]> {
@@ -276,24 +341,4 @@ export async function assignStation(
     },
     body: JSON.stringify(body),
   })
-}
-
-export async function getConstituencyAggregate(
-  constituencyId: string,
-  raceId: string
-): Promise<AggregateResult> {
-  const data = await fetchJson<{ data: AggregateResult }>(
-    `/results/aggregate/constituency/${constituencyId}?raceId=${raceId}`
-  )
-  return data.data
-}
-
-export async function getWardAggregate(
-  wardId: string,
-  raceId: string
-): Promise<AggregateResult> {
-  const data = await fetchJson<{ data: AggregateResult }>(
-    `/results/aggregate/ward/${wardId}?raceId=${raceId}`
-  )
-  return data.data
 }

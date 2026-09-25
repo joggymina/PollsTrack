@@ -379,3 +379,17 @@ export async function getPollingStation(
     return null
   }
 }
+
+export async function unassignStation(
+  token: string,
+  body: { userId: string; pollingStationId: string }
+) {
+  return fetchJson('/admin/assignments', {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  })
+}

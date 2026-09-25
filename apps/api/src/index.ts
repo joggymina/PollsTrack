@@ -1188,6 +1188,33 @@ app.post(
   }
 )
 
+app.delete(
+  '/admin/assignments',
+  { preHandler: [app.requireSuperAdmin] },
+  async (request, reply) => {
+    const body = request.body as {
+      userId?: string
+      pollingStationId?: string
+    }
+    if (!body.userId || !body.pollingStationId) {
+      return reply.status(400).send({
+        error: 'userId and pollingStationId are required',
+      })
+    }
+    const existing = await prisma.agentAssignment.findFirst({
+      where: {
+        userId: body.userId,
+        pollingStationId: body.pollingStationId,
+      },
+    })
+    if (!existing) {
+      return reply.status(404).send({ error: 'Assignment not found' })
+    }
+    await prisma.agentAssignment.delete({ where: { id: existing.id } })
+    return { data: { ok: true } }
+  }
+)
+
 // ======================
 // ROOT
 // ======================
@@ -1230,6 +1257,7 @@ app.get('/', async () => {
       'GET  /admin/agents',
       'POST /admin/agents',
       'POST /admin/assignments',
+      'DELETE /admin/assignments',
     ]
   }
 })

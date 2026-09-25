@@ -24,6 +24,9 @@ const voteInputClass =
 const selectClass =
   'w-full px-4 py-3.5 text-base text-gray-900 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none'
 
+const readOnlyClass =
+  'w-full px-4 py-3 text-lg text-gray-900 bg-gray-50 border border-gray-200 rounded-xl'
+
 export default function SubmitResultsPage() {
   const router = useRouter()
   const params = useParams()
@@ -35,7 +38,6 @@ export default function SubmitResultsPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [votes, setVotes] = useState<Record<string, string>>({})
   const [totalVoted, setTotalVoted] = useState('')
-  const [totalRegistered, setTotalRegistered] = useState('')
   const [rejectedBallots, setRejectedBallots] = useState('0')
   const [formPhoto, setFormPhoto] = useState<string | null>(null)
   const [photoName, setPhotoName] = useState('')
@@ -52,11 +54,16 @@ export default function SubmitResultsPage() {
       return
     }
 
-    const token = getToken()!
+    const token = getToken()
+    if (!token) {
+      clearAuth()
+      router.replace('/login')
+      return
+    }
 
     async function load() {
       try {
-        const [me, raceList] = await Promise.all([getMe(token), getRaces()])
+        const [me, raceList] = await Promise.all([getMe(token!), getRaces()])
 
         const found = me.assignedStations.find((s) => s.id === stationId)
         if (!found) {
@@ -72,7 +79,7 @@ export default function SubmitResultsPage() {
         }
       } catch (err: any) {
         setError(err.message)
-        if (err.message.includes('Unauthorized')) {
+        if (err.message?.includes('Unauthorized') || err.message?.includes('401')) {
           clearAuth()
           router.replace('/login')
         }
@@ -116,7 +123,6 @@ export default function SubmitResultsPage() {
       setError('Please choose an image file')
       return
     }
-
     if (file.size > 2 * 1024 * 1024) {
       setError('Photo must be under 2MB')
       return
@@ -148,12 +154,14 @@ export default function SubmitResultsPage() {
         }
       }
 
+      // Registered voters always from DB — never from user input
       const payload = {
         pollingStationId: station.id,
         raceId: selectedRaceId,
-        totalRegistered: totalRegistered
-          ? parseInt(totalRegistered, 10)
-          : undefined,
+        totalRegistered:
+          station.registeredVoters != null
+            ? station.registeredVoters
+            : undefined,
         totalVoted: totalVoted ? parseInt(totalVoted, 10) : undefined,
         rejectedBallots: rejectedBallots
           ? parseInt(rejectedBallots, 10)
@@ -292,17 +300,13 @@ export default function SubmitResultsPage() {
 
           <div>
             <label className="block text-sm text-gray-600 mb-1">
-              Total Registered (optional)
+              Total Registered (from IEBC register)
             </label>
-            <input
-              type="number"
-              min="0"
-              inputMode="numeric"
-              value={totalRegistered}
-              onChange={(e) => setTotalRegistered(e.target.value)}
-              className={inputClass}
-              placeholder="e.g. 520"
-            />
+            <div className={readOnlyClass}>
+              {station.registeredVoters != null
+                ? station.registeredVoters.toLocaleString()
+                : 'Not set in database'}
+            </div>
           </div>
 
           <div>
@@ -362,7 +366,6 @@ export default function SubmitResultsPage() {
           </div>
         )}
 
-        {/* Optional form photo */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3">
           <h3 className="font-semibold text-gray-900">Form photo (optional)</h3>
           <p className="text-sm text-gray-500">

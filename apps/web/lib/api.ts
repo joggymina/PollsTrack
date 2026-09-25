@@ -41,6 +41,7 @@ export type AssignedStation = {
   id: string
   code: string
   name: string
+  registeredVoters: number | null
   ward: {
     id: string
     name: string

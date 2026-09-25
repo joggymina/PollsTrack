@@ -111,6 +111,7 @@ app.get('/me', {
               id: true,
               code: true,
               name: true,
+              registeredVoters: true,  // ← add this
               ward: {
                 select: {
                   id: true,

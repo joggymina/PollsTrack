@@ -31,22 +31,32 @@ export default function AgentHomePage() {
       return
     }
 
-    const token = getToken()!
+    const token = getToken()
+    if (!token) {
+      clearAuth()
+      router.replace('/login')
+      return
+    }
 
-    Promise.all([getMe(token), getResults().catch(() => [])])
-      .then(([meData, results]) => {
+    let cancelled = false
+
+    // 1) Critical path: /me only — show stations as soon as this returns
+    getMe(token)
+      .then((meData) => {
+        if (cancelled) return
         setMe(meData)
-        setSubmittedStationIds(
-          new Set(results.map((r) => r.pollingStationId))
-        )
+        setLoading(false)
         refreshPendingCount()
 
+        // Auto-sync offline queue (non-blocking)
         if (
+          typeof navigator !== 'undefined' &&
           navigator.onLine &&
           getUser() &&
           getPendingCount(getUser()!.id) > 0
         ) {
           syncOfflineQueue().then(({ synced }) => {
+            if (cancelled) return
             if (synced > 0) {
               refreshPendingCount()
               setSyncMessage(`${synced} offline result(s) synced`)
@@ -55,16 +65,31 @@ export default function AgentHomePage() {
         }
       })
       .catch((err) => {
-        setError(err.message)
-        if (
-          err.message.includes('Unauthorized') ||
-          err.message.includes('401')
-        ) {
+        if (cancelled) return
+        const msg = err?.message || 'Failed to load'
+        setError(msg)
+        setLoading(false)
+        if (msg.includes('Unauthorized') || msg.includes('401')) {
           clearAuth()
           router.replace('/login')
         }
       })
-      .finally(() => setLoading(false))
+
+    // 2) Background: which stations already submitted (must not block UI)
+    getResults()
+      .then((results) => {
+        if (cancelled) return
+        setSubmittedStationIds(
+          new Set(results.map((r) => r.pollingStationId))
+        )
+      })
+      .catch(() => {
+        // Ignore — page still usable without submitted flags
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [router])
 
   useEffect(() => {

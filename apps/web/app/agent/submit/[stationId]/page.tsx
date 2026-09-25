@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, FormEvent, ChangeEvent } from 'react'
+import { useEffect, useState, useMemo, FormEvent, ChangeEvent } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -64,19 +64,15 @@ export default function SubmitResultsPage() {
     async function load() {
       try {
         const [me, raceList] = await Promise.all([getMe(token!), getRaces()])
-
         const found = me.assignedStations.find((s) => s.id === stationId)
         if (!found) {
           setError('You are not assigned to this station')
           setLoading(false)
           return
         }
-
         setStation(found)
         setRaces(raceList)
-        if (raceList.length === 1) {
-          setSelectedRaceId(raceList[0].id)
-        }
+        if (raceList.length === 1) setSelectedRaceId(raceList[0].id)
       } catch (err: any) {
         setError(err.message)
         if (err.message?.includes('Unauthorized') || err.message?.includes('401')) {
@@ -96,7 +92,6 @@ export default function SubmitResultsPage() {
       setCandidates([])
       return
     }
-
     getCandidates(selectedRaceId)
       .then((list) => {
         setCandidates(list)
@@ -118,7 +113,6 @@ export default function SubmitResultsPage() {
   function onPhotoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-
     if (!file.type.startsWith('image/')) {
       setError('Please choose an image file')
       return
@@ -127,7 +121,6 @@ export default function SubmitResultsPage() {
       setError('Photo must be under 2MB')
       return
     }
-
     setError('')
     const reader = new FileReader()
     reader.onload = () => {
@@ -137,9 +130,89 @@ export default function SubmitResultsPage() {
     reader.readAsDataURL(file)
   }
 
+  // ---- Live validation ----
+  const registered = station?.registeredVoters ?? null
+  const votedNum = totalVoted === '' ? null : parseInt(totalVoted, 10)
+  const rejectedNum =
+    rejectedBallots === '' ? 0 : parseInt(rejectedBallots, 10) || 0
+
+  const candidateSum = useMemo(() => {
+    return candidates.reduce((sum, c) => {
+      const v = votes[c.id]
+      if (v === '' || v === undefined) return sum
+      return sum + (parseInt(v, 10) || 0)
+    }, 0)
+  }, [candidates, votes])
+
+  const allVotesFilled = candidates.every(
+    (c) => votes[c.id] !== '' && votes[c.id] !== undefined
+  )
+
+  const validVotes =
+    votedNum != null && !Number.isNaN(votedNum)
+      ? Math.max(0, votedNum - rejectedNum)
+      : null
+
+  const validationErrors = useMemo(() => {
+    const errs: string[] = []
+
+    if (votedNum != null) {
+      if (votedNum < 0) errs.push('Total voted cannot be negative')
+      if (registered != null && votedNum > registered) {
+        errs.push(
+          `Total voted (${votedNum}) cannot exceed registered voters (${registered})`
+        )
+      }
+    }
+
+    if (rejectedNum < 0) errs.push('Rejected ballots cannot be negative')
+    if (votedNum != null && rejectedNum > votedNum) {
+      errs.push(
+        `Rejected (${rejectedNum}) cannot exceed total voted (${votedNum})`
+      )
+    }
+
+    if (allVotesFilled && validVotes != null && candidateSum !== validVotes) {
+      errs.push(
+        `Candidate votes sum (${candidateSum}) must equal valid votes (${validVotes} = voted − rejected)`
+      )
+    }
+
+    for (const c of candidates) {
+      const v = votes[c.id]
+      if (v !== '' && v !== undefined && parseInt(v, 10) < 0) {
+        errs.push(`${c.name}: votes cannot be negative`)
+      }
+    }
+
+    return errs
+  }, [
+    votedNum,
+    registered,
+    rejectedNum,
+    allVotesFilled,
+    validVotes,
+    candidateSum,
+    candidates,
+    votes,
+  ])
+
+  const canSubmit =
+    !!selectedRaceId &&
+    candidates.length > 0 &&
+    allVotesFilled &&
+    votedNum != null &&
+    !Number.isNaN(votedNum) &&
+    validationErrors.length === 0
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
+    if (!canSubmit) {
+      setError(validationErrors[0] || 'Fix validation errors before submitting')
+      return
+    }
+
     setSubmitting(true)
     setOfflineSaved(false)
 
@@ -148,13 +221,6 @@ export default function SubmitResultsPage() {
     if (!token || !user || !station || !selectedRaceId) return
 
     try {
-      for (const c of candidates) {
-        if (votes[c.id] === '' || votes[c.id] === undefined) {
-          throw new Error(`Enter votes for ${c.name}`)
-        }
-      }
-
-      // Registered voters always from DB — never from user input
       const payload = {
         pollingStationId: station.id,
         raceId: selectedRaceId,
@@ -162,10 +228,8 @@ export default function SubmitResultsPage() {
           station.registeredVoters != null
             ? station.registeredVoters
             : undefined,
-        totalVoted: totalVoted ? parseInt(totalVoted, 10) : undefined,
-        rejectedBallots: rejectedBallots
-          ? parseInt(rejectedBallots, 10)
-          : 0,
+        totalVoted: votedNum!,
+        rejectedBallots: rejectedNum,
         clientSubmittedAt: new Date().toISOString(),
         formPhotoUrl: formPhoto || undefined,
         votes: candidates.map((c) => ({
@@ -260,6 +324,9 @@ export default function SubmitResultsPage() {
     )
   }
 
+  const balanceOk =
+    allVotesFilled && validVotes != null && candidateSum === validVotes
+
   return (
     <div className="max-w-lg mx-auto">
       <div className="mb-6">
@@ -321,6 +388,7 @@ export default function SubmitResultsPage() {
               onChange={(e) => setTotalVoted(e.target.value)}
               className={inputClass}
               placeholder="e.g. 410"
+              required
             />
           </div>
 
@@ -337,12 +405,46 @@ export default function SubmitResultsPage() {
               className={inputClass}
             />
           </div>
+
+          {/* Live balance summary */}
+          <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 text-sm space-y-1">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Valid votes (voted − rejected)</span>
+              <span className="font-semibold text-gray-900">
+                {validVotes != null ? validVotes.toLocaleString() : '—'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Sum of candidate votes</span>
+              <span
+                className={`font-semibold ${
+                  !allVotesFilled
+                    ? 'text-gray-400'
+                    : balanceOk
+                      ? 'text-green-700'
+                      : 'text-red-600'
+                }`}
+              >
+                {allVotesFilled ? candidateSum.toLocaleString() : '—'}
+              </span>
+            </div>
+            {allVotesFilled && validVotes != null && (
+              <p
+                className={`text-xs pt-1 ${
+                  balanceOk ? 'text-green-700' : 'text-red-600'
+                }`}
+              >
+                {balanceOk
+                  ? '✓ Candidate votes balance with valid votes'
+                  : '✗ Candidate votes must equal valid votes'}
+              </p>
+            )}
+          </div>
         </div>
 
         {candidates.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
             <h3 className="font-semibold text-gray-900">Candidate Votes</h3>
-
             {candidates.map((c) => (
               <div key={c.id} className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
@@ -371,7 +473,6 @@ export default function SubmitResultsPage() {
           <p className="text-sm text-gray-500">
             Take or upload a photo of the official results form (max 2MB).
           </p>
-
           <input
             type="file"
             accept="image/*"
@@ -379,7 +480,6 @@ export default function SubmitResultsPage() {
             onChange={onPhotoChange}
             className="block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700"
           />
-
           {formPhoto && (
             <div className="space-y-2">
               <p className="text-xs text-gray-500 truncate">{photoName}</p>
@@ -402,22 +502,25 @@ export default function SubmitResultsPage() {
           )}
         </div>
 
-        {error && (
-          <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl">
-            {error}
+        {(validationErrors.length > 0 || error) && (
+          <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl space-y-1">
+            {error && <p>{error}</p>}
+            {validationErrors.map((msg) => (
+              <p key={msg}>{msg}</p>
+            ))}
           </div>
         )}
 
         <button
           type="submit"
-          disabled={submitting || !selectedRaceId || candidates.length === 0}
+          disabled={submitting || !canSubmit}
           className="w-full py-4 text-lg font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {submitting ? 'Submitting…' : 'Submit Results'}
         </button>
 
         <p className="text-center text-xs text-gray-400">
-          Results cannot be edited after submission. Double-check the numbers.
+          Results cannot be edited after submission. Numbers must balance.
         </p>
       </form>
     </div>

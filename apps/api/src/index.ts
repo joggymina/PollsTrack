@@ -573,21 +573,17 @@ app.post('/results', {
     deviceInfo?: Record<string, unknown>
     votes: { candidateId: string; votes: number }[]
   }
-
   const user = request.user as { id: string; role: string }
-
   if (!body.pollingStationId || !body.raceId || !body.clientSubmittedAt) {
     return reply.status(400).send({
       error: 'pollingStationId, raceId and clientSubmittedAt are required',
     })
   }
-
   if (!Array.isArray(body.votes) || body.votes.length === 0) {
     return reply.status(400).send({
       error: 'votes array is required and must not be empty',
     })
   }
-
   for (const v of body.votes) {
     if (!v.candidateId || typeof v.votes !== 'number' || v.votes < 0) {
       return reply.status(400).send({
@@ -595,7 +591,6 @@ app.post('/results', {
       })
     }
   }
-
   // Check the agent is assigned to this station
   const assignment = await prisma.agentAssignment.findFirst({
     where: {
@@ -603,12 +598,55 @@ app.post('/results', {
       pollingStationId: body.pollingStationId,
     },
   })
-
   if (!assignment && user.role !== 'SUPER_ADMIN') {
     return reply.status(403).send({
       error: 'You are not assigned to this polling station',
     })
   }
+
+  // ---- Validation: turnout & vote balance ----
+  const station = await prisma.pollingStation.findUnique({
+    where: { id: body.pollingStationId },
+    select: { id: true, registeredVoters: true },
+  })
+  if (!station) {
+    return reply.status(400).send({ error: 'Invalid pollingStationId' })
+  }
+
+  const registered = station.registeredVoters
+  const totalVoted = body.totalVoted
+  const rejected = body.rejectedBallots ?? 0
+  const candidateSum = body.votes.reduce((s, v) => s + v.votes, 0)
+
+  if (typeof totalVoted !== 'number' || totalVoted < 0) {
+    return reply.status(400).send({
+      error: 'totalVoted is required and must be a non-negative number',
+    })
+  }
+  if (rejected < 0) {
+    return reply.status(400).send({ error: 'rejectedBallots cannot be negative' })
+  }
+  if (registered != null && totalVoted > registered) {
+    return reply.status(400).send({
+      error: `Total voted (${totalVoted}) cannot exceed registered voters (${registered})`,
+    })
+  }
+  if (rejected > totalVoted) {
+    return reply.status(400).send({
+      error: `Rejected ballots (${rejected}) cannot exceed total voted (${totalVoted})`,
+    })
+  }
+
+  const validVotes = totalVoted - rejected
+  if (candidateSum !== validVotes) {
+    return reply.status(400).send({
+      error: `Sum of candidate votes (${candidateSum}) must equal valid votes (${validVotes} = totalVoted − rejected)`,
+    })
+  }
+
+  // Always prefer DB registered count over client-supplied value
+  const totalRegistered =
+    registered != null ? registered : body.totalRegistered ?? null
 
   try {
     const stationResult = await prisma.stationResult.create({
@@ -616,9 +654,9 @@ app.post('/results', {
         pollingStationId: body.pollingStationId,
         raceId: body.raceId,
         submittedById: user.id,
-        totalRegistered: body.totalRegistered ?? null,
-        totalVoted: body.totalVoted ?? null,
-        rejectedBallots: body.rejectedBallots ?? 0,
+        totalRegistered,
+        totalVoted,
+        rejectedBallots: rejected,
         clientSubmittedAt: new Date(body.clientSubmittedAt),
         isOffline: body.isOffline ?? false,
         formPhotoUrl: body.formPhotoUrl ?? null,
@@ -648,7 +686,6 @@ app.post('/results', {
         },
       },
     })
-
     // Audit log (best-effort)
     try {
       await prisma.auditLog.create({
@@ -660,7 +697,7 @@ app.post('/results', {
           details: {
             pollingStationId: body.pollingStationId,
             raceId: body.raceId,
-            totalVoted: body.totalVoted,
+            totalVoted,
             isOffline: body.isOffline ?? false,
           },
           ipAddress: request.ip,
@@ -670,7 +707,6 @@ app.post('/results', {
     } catch (auditError) {
       console.error('Audit log failed (result still saved):', auditError)
     }
-
     return reply.status(201).send({ data: stationResult })
   } catch (error: any) {
     if (error.code === 'P2002') {

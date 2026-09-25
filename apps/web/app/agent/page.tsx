@@ -8,11 +8,29 @@ import { getToken, getUser, clearAuth, isLoggedIn } from '@/lib/auth'
 import { getPendingCount } from '@/lib/offline-queue'
 import { syncOfflineQueue } from '@/lib/sync-offline'
 
+const ME_CACHE_KEY = 'pollstrack_me_cache'
+
+function getCachedMe(): MeResponse | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(ME_CACHE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as MeResponse
+  } catch {
+    return null
+  }
+}
+
+function setCachedMe(me: MeResponse) {
+  localStorage.setItem(ME_CACHE_KEY, JSON.stringify(me))
+}
+
 export default function AgentHomePage() {
   const router = useRouter()
   const [me, setMe] = useState<MeResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [isOfflineCache, setIsOfflineCache] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
@@ -40,12 +58,15 @@ export default function AgentHomePage() {
 
     let cancelled = false
 
-    // 1) Critical path: /me only — show stations as soon as this returns
+    // 1) Try network first
     getMe(token)
       .then((meData) => {
         if (cancelled) return
         setMe(meData)
+        setCachedMe(meData) // cache for offline use
+        setIsOfflineCache(false)
         setLoading(false)
+        setError('')
         refreshPendingCount()
 
         // Auto-sync offline queue (non-blocking)
@@ -66,16 +87,40 @@ export default function AgentHomePage() {
       })
       .catch((err) => {
         if (cancelled) return
+
         const msg = err?.message || 'Failed to load'
-        setError(msg)
-        setLoading(false)
+        const isNetworkError =
+          msg.includes('Failed to fetch') ||
+          msg.includes('NetworkError') ||
+          msg.includes('Network request failed') ||
+          (typeof navigator !== 'undefined' && !navigator.onLine)
+
+        // 2) Fallback to cache when offline / network error
+        if (isNetworkError) {
+          const cached = getCachedMe()
+          if (cached) {
+            setMe(cached)
+            setIsOfflineCache(true)
+            setLoading(false)
+            setError('')
+            refreshPendingCount()
+            return
+          }
+        }
+
+        // Auth errors → force re-login
         if (msg.includes('Unauthorized') || msg.includes('401')) {
           clearAuth()
+          localStorage.removeItem(ME_CACHE_KEY)
           router.replace('/login')
+          return
         }
+
+        setError(msg)
+        setLoading(false)
       })
 
-    // 2) Background: which stations already submitted (must not block UI)
+    // Background: which stations already submitted (ignore failures)
     getResults()
       .then((results) => {
         if (cancelled) return
@@ -83,9 +128,7 @@ export default function AgentHomePage() {
           new Set(results.map((r) => r.pollingStationId))
         )
       })
-      .catch(() => {
-        // Ignore — page still usable without submitted flags
-      })
+      .catch(() => {})
 
     return () => {
       cancelled = true
@@ -95,6 +138,19 @@ export default function AgentHomePage() {
   useEffect(() => {
     function handleOnline() {
       refreshPendingCount()
+      setIsOfflineCache(false)
+
+      // Re-fetch fresh data when back online
+      const token = getToken()
+      if (token) {
+        getMe(token)
+          .then((meData) => {
+            setMe(meData)
+            setCachedMe(meData)
+          })
+          .catch(() => {})
+      }
+
       const user = getUser()
       if (user && getPendingCount(user.id) > 0) {
         setSyncing(true)
@@ -119,6 +175,7 @@ export default function AgentHomePage() {
 
   function handleLogout() {
     clearAuth()
+    localStorage.removeItem(ME_CACHE_KEY)
     router.replace('/login')
   }
 
@@ -176,6 +233,13 @@ export default function AgentHomePage() {
           Logout
         </button>
       </div>
+
+      {/* Offline cache indicator */}
+      {isOfflineCache && (
+        <div className="mb-4 bg-gray-100 border border-gray-200 rounded-xl px-4 py-2 text-sm text-gray-600">
+          Showing cached stations · you are offline
+        </div>
+      )}
 
       {pendingCount > 0 && (
         <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-3">

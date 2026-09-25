@@ -4,6 +4,7 @@ import {
   getWards,
   getConstituencies,
   getCounties,
+  getPollingStations,
   getRaces,
 } from '@/lib/api'
 import { StatsCards } from '@/components/StatsCards'
@@ -32,12 +33,14 @@ export default async function WardPage({ params, searchParams }: Props) {
     )
   }
 
-  const [aggregate, allWards, allConstituencies, counties] = await Promise.all([
-    getWardAggregate(wardId, raceId),
-    getWards(),
-    getConstituencies(),
-    getCounties(),
-  ])
+  const [aggregate, allWards, allConstituencies, counties, stations] =
+    await Promise.all([
+      getWardAggregate(wardId, raceId),
+      getWards(),
+      getConstituencies(),
+      getCounties(),
+      getPollingStations(wardId),
+    ])
 
   const ward = allWards.find((w) => w.id === wardId)
   const constituency = allConstituencies.find(
@@ -93,8 +96,41 @@ export default async function WardPage({ params, searchParams }: Props) {
         totalRejected={aggregate.totalRejected}
       />
 
-      <div className="max-w-2xl">
-        <CandidateRanking candidates={aggregate.candidates} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2">
+          <CandidateRanking candidates={aggregate.candidates} />
+        </div>
+
+        <div className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Polling Stations
+            </h2>
+            <p className="text-sm text-gray-500">Click to view details</p>
+          </div>
+          <div className="divide-y divide-gray-50 max-h-[480px] overflow-y-auto">
+            {stations.length === 0 ? (
+              <p className="px-6 py-4 text-sm text-gray-500">
+                No polling stations found for this ward.
+              </p>
+            ) : (
+              stations.map((station) => (
+                <Link
+                  key={station.id}
+                  href={`/station/${station.id}?raceId=${raceId}`}
+                  className="block px-6 py-3 hover:bg-blue-50 transition-colors"
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium text-gray-900">
+                      {station.name}
+                    </span>
+                    <span className="text-sm text-gray-400">{station.code}</span>
+                  </div>
+                </Link>
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       <AutoRefresh intervalSeconds={20} />

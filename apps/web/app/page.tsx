@@ -3,12 +3,18 @@ import { getNationalAggregate, getCounties, getRaces } from '@/lib/api'
 import { StatsCards } from '@/components/StatsCards'
 import { CandidateRanking } from '@/components/CandidateRanking'
 import { AutoRefresh } from '@/components/AutoRefresh'
+import { RaceSelector } from '@/components/RaceSelector'
 
 export const dynamic = 'force-dynamic'
 
-export default async function NationalPage() {
+type Props = {
+  searchParams: Promise<{ raceId?: string }>
+}
+
+export default async function NationalPage({ searchParams }: Props) {
+  const { raceId: raceIdParam } = await searchParams
   const races = await getRaces()
-  const raceId = races[0]?.id
+  const raceId = raceIdParam || races[0]?.id
 
   if (!raceId) {
     return (
@@ -27,9 +33,7 @@ export default async function NationalPage() {
     <div>
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-900">National Overview</h2>
-        <p className="text-gray-500 mt-1">
-          {races[0].position} · Live results
-        </p>
+        <RaceSelector races={races} currentRaceId={raceId} />
       </div>
 
       <StatsCards

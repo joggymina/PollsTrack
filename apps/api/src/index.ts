@@ -17,9 +17,34 @@ await app.register(cors, {
 await app.register(authPlugin)
 
 // ======================
-// HEALTH & TEST
+// AUTH / ORG HELPERS
 // ======================
 
+type JwtUser = {
+  id: string
+  role: string
+  organizationId?: string | null
+}
+
+async function getCallerOrgId(request: {
+  user: unknown
+}): Promise<string | null> {
+  const payload = request.user as JwtUser
+  if (payload?.organizationId) return payload.organizationId
+
+  if (!payload?.id) return null
+
+  const dbUser = await prisma.user.findUnique({
+    where: { id: payload.id },
+    select: { organizationId: true },
+  })
+
+  return dbUser?.organizationId ?? null
+}
+
+// ======================
+// HEALTH & TEST
+// ======================
 app.get('/health', async () => {
   return {
     status: 'ok',
@@ -94,7 +119,6 @@ app.post('/auth/login', async (request, reply) => {
     },
   }
 })
-
 // ======================
 // ORGANIZATIONS
 // ======================
@@ -1253,19 +1277,27 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
     },
   }
 })
-
 // ======================
 // ADMIN (platform SUPER_ADMIN)
 // ======================
-
 app.get(
   '/admin/agents',
   {
     preHandler: [app.requireSuperAdmin],
   },
-  async () => {
+  async (request, reply) => {
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
     const agents = await prisma.user.findMany({
-      where: { role: { in: ['AGENT', 'SUPER_ADMIN'] } },
+      where: {
+        organizationId: orgId,
+        role: { in: ['AGENT', 'SUPER_ADMIN'] },
+      },
       orderBy: { name: 'asc' },
       select: {
         id: true,
@@ -1309,9 +1341,15 @@ app.post(
       name?: string
       role?: string
     }
-
     if (!body.phone || !body.name) {
       return reply.status(400).send({ error: 'phone and name are required' })
+    }
+
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
     }
 
     const phone = body.phone.trim()
@@ -1324,6 +1362,7 @@ app.post(
           name: body.name.trim(),
           role,
           isActive: true,
+          organizationId: orgId,
         },
         select: {
           id: true,
@@ -1355,11 +1394,33 @@ app.post(
       userId?: string
       pollingStationId?: string
     }
-    const admin = request.user as { id: string }
-
+    const admin = request.user as JwtUser
     if (!body.userId || !body.pollingStationId) {
       return reply.status(400).send({
         error: 'userId and pollingStationId are required',
+      })
+    }
+
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
+    // Agent must belong to the same organization
+    const target = await prisma.user.findFirst({
+      where: {
+        id: body.userId,
+        organizationId: orgId,
+        role: { in: ['AGENT', 'SUPER_ADMIN'] },
+        isActive: true,
+      },
+      select: { id: true },
+    })
+    if (!target) {
+      return reply.status(403).send({
+        error: 'User is not in your organization',
       })
     }
 
@@ -1369,7 +1430,6 @@ app.post(
         pollingStationId: body.pollingStationId,
       },
     })
-
     if (existing) {
       return reply
         .status(409)
@@ -1414,6 +1474,27 @@ app.delete(
         error: 'userId and pollingStationId are required',
       })
     }
+
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
+    const target = await prisma.user.findFirst({
+      where: {
+        id: body.userId,
+        organizationId: orgId,
+      },
+      select: { id: true },
+    })
+    if (!target) {
+      return reply.status(403).send({
+        error: 'User is not in your organization',
+      })
+    }
+
     const existing = await prisma.agentAssignment.findFirst({
       where: {
         userId: body.userId,
@@ -1423,11 +1504,11 @@ app.delete(
     if (!existing) {
       return reply.status(404).send({ error: 'Assignment not found' })
     }
+
     await prisma.agentAssignment.delete({ where: { id: existing.id } })
     return { data: { ok: true } }
   }
 )
-
 // ======================
 // POSITION ADMIN (OPS)
 // ======================

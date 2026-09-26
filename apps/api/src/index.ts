@@ -26,6 +26,14 @@ type JwtUser = {
   organizationId?: string | null
 }
 
+type OrgGeo = {
+  id: string
+  primaryLevel: string
+  countyId: string | null
+  constituencyId: string | null
+  wardId: string | null
+}
+
 async function getCallerOrgId(request: {
   user: unknown
 }): Promise<string | null> {
@@ -40,6 +48,52 @@ async function getCallerOrgId(request: {
   })
 
   return dbUser?.organizationId ?? null
+}
+
+async function getCallerOrg(request: {
+  user: unknown
+}): Promise<OrgGeo | null> {
+  const orgId = await getCallerOrgId(request)
+  if (!orgId) return null
+
+  return prisma.organization.findUnique({
+    where: { id: orgId },
+    select: {
+      id: true,
+      primaryLevel: true,
+      countyId: true,
+      constituencyId: true,
+      wardId: true,
+    },
+  })
+}
+
+/** Stations this org may use (by geography). NATIONAL = no filter. */
+function stationWhereForOrg(org: OrgGeo) {
+  if (org.primaryLevel === 'WARD' && org.wardId) {
+    return { wardId: org.wardId }
+  }
+  if (org.primaryLevel === 'CONSTITUENCY' && org.constituencyId) {
+    return { ward: { constituencyId: org.constituencyId } }
+  }
+  if (org.primaryLevel === 'COUNTY' && org.countyId) {
+    return { ward: { constituency: { countyId: org.countyId } } }
+  }
+  return {}
+}
+
+async function assertStationInOrg(
+  stationId: string,
+  org: OrgGeo
+): Promise<boolean> {
+  const station = await prisma.pollingStation.findFirst({
+    where: {
+      id: stationId,
+      ...stationWhereForOrg(org),
+    },
+    select: { id: true },
+  })
+  return !!station
 }
 
 // ======================
@@ -862,6 +916,28 @@ app.post(
       })
     }
 
+    // Org geography + race ownership
+    const org = await getCallerOrg(request)
+    if (org) {
+      if (!(await assertStationInOrg(body.pollingStationId, org))) {
+        return reply.status(403).send({
+          error: 'Polling station is outside your organization area',
+        })
+      }
+      const race = await prisma.race.findFirst({
+        where: {
+          id: body.raceId,
+          election: { organizationId: org.id },
+        },
+        select: { id: true },
+      })
+      if (!race) {
+        return reply.status(400).send({
+          error: 'Race not found in your organization',
+        })
+      }
+    }
+
     const station = await prisma.pollingStation.findUnique({
       where: { id: body.pollingStationId },
       select: { id: true, registeredVoters: true },
@@ -1393,6 +1469,7 @@ app.post(
         .send({ error: 'No organization linked to your account' })
     }
 
+    // Any position is allowed — org chooses which races to monitor
     const race = await prisma.race.findFirst({
       where: {
         id: body.raceId,
@@ -1536,10 +1613,10 @@ app.patch(
   }
 )
 
-
 // ======================
 // ADMIN (platform SUPER_ADMIN)
 // ======================
+
 app.get(
   '/admin/agents',
   {
@@ -1655,24 +1732,24 @@ app.post(
       pollingStationId?: string
     }
     const admin = request.user as JwtUser
+
     if (!body.userId || !body.pollingStationId) {
       return reply.status(400).send({
         error: 'userId and pollingStationId are required',
       })
     }
 
-    const orgId = await getCallerOrgId(request)
-    if (!orgId) {
+    const org = await getCallerOrg(request)
+    if (!org) {
       return reply
         .status(403)
         .send({ error: 'No organization linked to your account' })
     }
 
-    // Agent must belong to the same organization
     const target = await prisma.user.findFirst({
       where: {
         id: body.userId,
-        organizationId: orgId,
+        organizationId: org.id,
         role: { in: ['AGENT', 'SUPER_ADMIN'] },
         isActive: true,
       },
@@ -1681,6 +1758,12 @@ app.post(
     if (!target) {
       return reply.status(403).send({
         error: 'User is not in your organization',
+      })
+    }
+
+    if (!(await assertStationInOrg(body.pollingStationId, org))) {
+      return reply.status(403).send({
+        error: 'Polling station is outside your organization area',
       })
     }
 

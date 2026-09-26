@@ -12,7 +12,7 @@ async function authPlugin(fastify: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         await request.jwtVerify()
-      } catch (err) {
+      } catch {
         return reply
           .status(401)
           .send({ error: 'Unauthorized – invalid or missing token' })
@@ -47,6 +47,19 @@ async function authPlugin(fastify: FastifyInstance) {
       }
     }
   )
+
+  fastify.decorate(
+    'requirePositionAdmin',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      await (fastify as any).authenticate(request, reply)
+      if (reply.sent) return
+
+      const user = request.user as { role: string }
+      if (user.role !== 'POSITION_ADMIN' && user.role !== 'SUPER_ADMIN') {
+        return reply.status(403).send({ error: 'Position admin only' })
+      }
+    }
+  )
 }
 
 export default fp(authPlugin)
@@ -62,6 +75,10 @@ declare module 'fastify' {
       reply: FastifyReply
     ) => Promise<void>
     requireSuperAdmin: (
+      request: FastifyRequest,
+      reply: FastifyReply
+    ) => Promise<void>
+    requirePositionAdmin: (
       request: FastifyRequest,
       reply: FastifyReply
     ) => Promise<void>

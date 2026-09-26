@@ -7,11 +7,11 @@ import authPlugin from './plugins/auth.js'
 dotenv.config()
 
 const app = Fastify({
-  logger: true
+  logger: true,
 })
 
 await app.register(cors, {
-  origin: true
+  origin: true,
 })
 
 await app.register(authPlugin)
@@ -23,7 +23,7 @@ await app.register(authPlugin)
 app.get('/health', async () => {
   return {
     status: 'ok',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   }
 })
 
@@ -34,12 +34,12 @@ app.get('/db-test', async () => {
     return {
       status: 'Database connected',
       counties: countyCount,
-      pollingStations: stationCount
+      pollingStations: stationCount,
     }
   } catch (error: any) {
     return {
       status: 'Database error',
-      message: error.message
+      message: error.message,
     }
   }
 })
@@ -62,11 +62,17 @@ app.post('/auth/login', async (request, reply) => {
   })
 
   if (!user || !user.isActive) {
-    return reply.status(401).send({ error: 'Invalid phone number or account inactive' })
+    return reply
+      .status(401)
+      .send({ error: 'Invalid phone number or account inactive' })
   }
 
-  if (user.role !== 'AGENT' && user.role !== 'SUPER_ADMIN') {
-    return reply.status(403).send({ error: 'Only agents can use this portal' })
+  if (
+    user.role !== 'AGENT' &&
+    user.role !== 'SUPER_ADMIN' &&
+    user.role !== 'POSITION_ADMIN'
+  ) {
+    return reply.status(403).send({ error: 'Account not allowed to login' })
   }
 
   const token = app.jwt.sign({
@@ -91,39 +97,43 @@ app.post('/auth/login', async (request, reply) => {
 // ME (current agent)
 // ======================
 
-app.get('/me', {
-  preHandler: [app.authenticate],
-}, async (request, reply) => {
-  const payload = request.user as { id: string }
+app.get(
+  '/me',
+  {
+    preHandler: [app.authenticate],
+  },
+  async (request, reply) => {
+    const payload = request.user as { id: string }
 
-  const user = await prisma.user.findUnique({
-    where: { id: payload.id },
-    select: {
-      id: true,
-      name: true,
-      phone: true,
-      role: true,
-      isActive: true,
-      agentAssignments: {
-        select: {
-          pollingStation: {
-            select: {
-              id: true,
-              code: true,
-              name: true,
-              registeredVoters: true,  // ← add this
-              ward: {
-                select: {
-                  id: true,
-                  name: true,
-                  constituency: {
-                    select: {
-                      id: true,
-                      name: true,
-                      county: {
-                        select: {
-                          id: true,
-                          name: true,
+    const user = await prisma.user.findUnique({
+      where: { id: payload.id },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        role: true,
+        isActive: true,
+        agentAssignments: {
+          select: {
+            pollingStation: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                registeredVoters: true,
+                ward: {
+                  select: {
+                    id: true,
+                    name: true,
+                    constituency: {
+                      select: {
+                        id: true,
+                        name: true,
+                        county: {
+                          select: {
+                            id: true,
+                            name: true,
+                          },
                         },
                       },
                     },
@@ -134,24 +144,24 @@ app.get('/me', {
           },
         },
       },
-    },
-  })
+    })
 
-  if (!user || !user.isActive) {
-    return reply.status(401).send({ error: 'User not found or inactive' })
-  }
+    if (!user || !user.isActive) {
+      return reply.status(401).send({ error: 'User not found or inactive' })
+    }
 
-  return {
-    data: {
-      id: user.id,
-      name: user.name,
-      phone: user.phone,
-      role: user.role,
-      isActive: user.isActive,
-      assignedStations: user.agentAssignments.map((a) => a.pollingStation),
-    },
+    return {
+      data: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+        isActive: user.isActive,
+        assignedStations: user.agentAssignments.map((a) => a.pollingStation),
+      },
+    }
   }
-})
+)
 
 // ======================
 // RACES & CANDIDATES
@@ -198,8 +208,8 @@ app.get('/counties', async () => {
       id: true,
       code: true,
       name: true,
-      createdAt: true
-    }
+      createdAt: true,
+    },
   })
   return { data: counties }
 })
@@ -214,11 +224,11 @@ app.get('/counties/:id', async (request, reply) => {
         select: {
           id: true,
           code: true,
-          name: true
+          name: true,
         },
-        orderBy: { code: 'asc' }
-      }
-    }
+        orderBy: { code: 'asc' },
+      },
+    },
   })
 
   if (!county) {
@@ -239,13 +249,15 @@ app.post('/counties', async (request, reply) => {
     const county = await prisma.county.create({
       data: {
         code: body.code,
-        name: body.name
-      }
+        name: body.name,
+      },
     })
     return reply.status(201).send({ data: county })
   } catch (error: any) {
     if (error.code === 'P2002') {
-      return reply.status(409).send({ error: 'County with this code already exists' })
+      return reply
+        .status(409)
+        .send({ error: 'County with this code already exists' })
     }
     throw error
   }
@@ -270,10 +282,10 @@ app.get('/constituencies', async (request) => {
         select: {
           id: true,
           code: true,
-          name: true
-        }
-      }
-    }
+          name: true,
+        },
+      },
+    },
   })
 
   return { data: constituencies }
@@ -286,13 +298,13 @@ app.get('/constituencies/:id', async (request, reply) => {
     where: { id },
     include: {
       county: {
-        select: { id: true, code: true, name: true }
+        select: { id: true, code: true, name: true },
       },
       wards: {
         select: { id: true, code: true, name: true },
-        orderBy: { code: 'asc' }
-      }
-    }
+        orderBy: { code: 'asc' },
+      },
+    },
   })
 
   if (!constituency) {
@@ -311,7 +323,7 @@ app.post('/constituencies', async (request, reply) => {
 
   if (!body.code || !body.name || !body.countyId) {
     return reply.status(400).send({
-      error: 'code, name and countyId are required'
+      error: 'code, name and countyId are required',
     })
   }
 
@@ -320,13 +332,15 @@ app.post('/constituencies', async (request, reply) => {
       data: {
         code: body.code,
         name: body.name,
-        countyId: body.countyId
-      }
+        countyId: body.countyId,
+      },
     })
     return reply.status(201).send({ data: constituency })
   } catch (error: any) {
     if (error.code === 'P2002') {
-      return reply.status(409).send({ error: 'Constituency with this code already exists' })
+      return reply
+        .status(409)
+        .send({ error: 'Constituency with this code already exists' })
     }
     if (error.code === 'P2003') {
       return reply.status(400).send({ error: 'Invalid countyId' })
@@ -359,12 +373,12 @@ app.get('/wards', async (request) => {
             select: {
               id: true,
               code: true,
-              name: true
-            }
-          }
-        }
-      }
-    }
+              name: true,
+            },
+          },
+        },
+      },
+    },
   })
 
   return { data: wards }
@@ -382,20 +396,20 @@ app.get('/wards/:id', async (request, reply) => {
           code: true,
           name: true,
           county: {
-            select: { id: true, code: true, name: true }
-          }
-        }
+            select: { id: true, code: true, name: true },
+          },
+        },
       },
       pollingStations: {
         select: {
           id: true,
           code: true,
           name: true,
-          registeredVoters: true
+          registeredVoters: true,
         },
-        orderBy: { code: 'asc' }
-      }
-    }
+        orderBy: { code: 'asc' },
+      },
+    },
   })
 
   if (!ward) {
@@ -414,7 +428,7 @@ app.post('/wards', async (request, reply) => {
 
   if (!body.code || !body.name || !body.constituencyId) {
     return reply.status(400).send({
-      error: 'code, name and constituencyId are required'
+      error: 'code, name and constituencyId are required',
     })
   }
 
@@ -423,8 +437,8 @@ app.post('/wards', async (request, reply) => {
       data: {
         code: body.code,
         name: body.name,
-        constituencyId: body.constituencyId
-      }
+        constituencyId: body.constituencyId,
+      },
     })
     return reply.status(201).send({ data: ward })
   } catch (error: any) {
@@ -468,14 +482,14 @@ app.get('/polling-stations', async (request) => {
                 select: {
                   id: true,
                   code: true,
-                  name: true
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   })
 
   return { data: stations }
@@ -498,13 +512,13 @@ app.get('/polling-stations/:id', async (request, reply) => {
               code: true,
               name: true,
               county: {
-                select: { id: true, code: true, name: true }
-              }
-            }
-          }
-        }
-      }
-    }
+                select: { id: true, code: true, name: true },
+              },
+            },
+          },
+        },
+      },
+    },
   })
 
   if (!station) {
@@ -524,7 +538,7 @@ app.post('/polling-stations', async (request, reply) => {
 
   if (!body.code || !body.name || !body.wardId) {
     return reply.status(400).send({
-      error: 'code, name and wardId are required'
+      error: 'code, name and wardId are required',
     })
   }
 
@@ -534,13 +548,15 @@ app.post('/polling-stations', async (request, reply) => {
         code: body.code,
         name: body.name,
         wardId: body.wardId,
-        registeredVoters: body.registeredVoters ?? null
-      }
+        registeredVoters: body.registeredVoters ?? null,
+      },
     })
     return reply.status(201).send({ data: station })
   } catch (error: any) {
     if (error.code === 'P2002') {
-      return reply.status(409).send({ error: 'Polling station with this code already exists' })
+      return reply
+        .status(409)
+        .send({ error: 'Polling station with this code already exists' })
     }
     if (error.code === 'P2003') {
       return reply.status(400).send({ error: 'Invalid wardId' })
@@ -553,179 +569,180 @@ app.post('/polling-stations', async (request, reply) => {
 // RESULTS (CORE FEATURE)
 // ======================
 
-/**
- * Submit results for a polling station + race
- * Uses JWT authenticated agent (no submittedById in body)
- */
-app.post('/results', {
-  preHandler: [app.requireAgent],
-}, async (request, reply) => {
-  const body = request.body as {
-    pollingStationId: string
-    raceId: string
-    totalRegistered?: number
-    totalVoted?: number
-    rejectedBallots?: number
-    clientSubmittedAt: string
-    isOffline?: boolean
-    formPhotoUrl?: string
-    formPhotoHash?: string
-    deviceInfo?: Record<string, unknown>
-    votes: { candidateId: string; votes: number }[]
-  }
-  const user = request.user as { id: string; role: string }
-  if (!body.pollingStationId || !body.raceId || !body.clientSubmittedAt) {
-    return reply.status(400).send({
-      error: 'pollingStationId, raceId and clientSubmittedAt are required',
-    })
-  }
-  if (!Array.isArray(body.votes) || body.votes.length === 0) {
-    return reply.status(400).send({
-      error: 'votes array is required and must not be empty',
-    })
-  }
-  for (const v of body.votes) {
-    if (!v.candidateId || typeof v.votes !== 'number' || v.votes < 0) {
+app.post(
+  '/results',
+  {
+    preHandler: [app.requireAgent],
+  },
+  async (request, reply) => {
+    const body = request.body as {
+      pollingStationId: string
+      raceId: string
+      totalRegistered?: number
+      totalVoted?: number
+      rejectedBallots?: number
+      clientSubmittedAt: string
+      isOffline?: boolean
+      formPhotoUrl?: string
+      formPhotoHash?: string
+      deviceInfo?: Record<string, unknown>
+      votes: { candidateId: string; votes: number }[]
+    }
+    const user = request.user as { id: string; role: string }
+
+    if (!body.pollingStationId || !body.raceId || !body.clientSubmittedAt) {
       return reply.status(400).send({
-        error: 'Each vote must have candidateId and a non-negative votes number',
+        error: 'pollingStationId, raceId and clientSubmittedAt are required',
       })
     }
-  }
-  // Check the agent is assigned to this station
-  const assignment = await prisma.agentAssignment.findFirst({
-    where: {
-      userId: user.id,
-      pollingStationId: body.pollingStationId,
-    },
-  })
-  if (!assignment && user.role !== 'SUPER_ADMIN') {
-    return reply.status(403).send({
-      error: 'You are not assigned to this polling station',
-    })
-  }
+    if (!Array.isArray(body.votes) || body.votes.length === 0) {
+      return reply.status(400).send({
+        error: 'votes array is required and must not be empty',
+      })
+    }
+    for (const v of body.votes) {
+      if (!v.candidateId || typeof v.votes !== 'number' || v.votes < 0) {
+        return reply.status(400).send({
+          error:
+            'Each vote must have candidateId and a non-negative votes number',
+        })
+      }
+    }
 
-  // ---- Validation: turnout & vote balance ----
-  const station = await prisma.pollingStation.findUnique({
-    where: { id: body.pollingStationId },
-    select: { id: true, registeredVoters: true },
-  })
-  if (!station) {
-    return reply.status(400).send({ error: 'Invalid pollingStationId' })
-  }
-
-  const registered = station.registeredVoters
-  const totalVoted = body.totalVoted
-  const rejected = body.rejectedBallots ?? 0
-  const candidateSum = body.votes.reduce((s, v) => s + v.votes, 0)
-
-  if (typeof totalVoted !== 'number' || totalVoted < 0) {
-    return reply.status(400).send({
-      error: 'totalVoted is required and must be a non-negative number',
-    })
-  }
-  if (rejected < 0) {
-    return reply.status(400).send({ error: 'rejectedBallots cannot be negative' })
-  }
-  if (registered != null && totalVoted > registered) {
-    return reply.status(400).send({
-      error: `Total voted (${totalVoted}) cannot exceed registered voters (${registered})`,
-    })
-  }
-  if (rejected > totalVoted) {
-    return reply.status(400).send({
-      error: `Rejected ballots (${rejected}) cannot exceed total voted (${totalVoted})`,
-    })
-  }
-
-  const validVotes = totalVoted - rejected
-  if (candidateSum !== validVotes) {
-    return reply.status(400).send({
-      error: `Sum of candidate votes (${candidateSum}) must equal valid votes (${validVotes} = totalVoted − rejected)`,
-    })
-  }
-
-  // Always prefer DB registered count over client-supplied value
-  const totalRegistered =
-    registered != null ? registered : body.totalRegistered ?? null
-
-  try {
-    const stationResult = await prisma.stationResult.create({
-      data: {
+    const assignment = await prisma.agentAssignment.findFirst({
+      where: {
+        userId: user.id,
         pollingStationId: body.pollingStationId,
-        raceId: body.raceId,
-        submittedById: user.id,
-        totalRegistered,
-        totalVoted,
-        rejectedBallots: rejected,
-        clientSubmittedAt: new Date(body.clientSubmittedAt),
-        isOffline: body.isOffline ?? false,
-        formPhotoUrl: body.formPhotoUrl ?? null,
-        formPhotoHash: body.formPhotoHash ?? null,
-        deviceInfo: body.deviceInfo ?? undefined,
-        status: 'SUBMITTED',
-        votes: {
-          create: body.votes.map((v) => ({
-            candidateId: v.candidateId,
-            votes: v.votes,
-          })),
-        },
       },
-      include: {
-        votes: {
-          include: {
-            candidate: {
-              select: { id: true, name: true, code: true, party: true },
+    })
+    if (!assignment && user.role !== 'SUPER_ADMIN') {
+      return reply.status(403).send({
+        error: 'You are not assigned to this polling station',
+      })
+    }
+
+    const station = await prisma.pollingStation.findUnique({
+      where: { id: body.pollingStationId },
+      select: { id: true, registeredVoters: true },
+    })
+    if (!station) {
+      return reply.status(400).send({ error: 'Invalid pollingStationId' })
+    }
+
+    const registered = station.registeredVoters
+    const totalVoted = body.totalVoted
+    const rejected = body.rejectedBallots ?? 0
+    const candidateSum = body.votes.reduce((s, v) => s + v.votes, 0)
+
+    if (typeof totalVoted !== 'number' || totalVoted < 0) {
+      return reply.status(400).send({
+        error: 'totalVoted is required and must be a non-negative number',
+      })
+    }
+    if (rejected < 0) {
+      return reply
+        .status(400)
+        .send({ error: 'rejectedBallots cannot be negative' })
+    }
+    if (registered != null && totalVoted > registered) {
+      return reply.status(400).send({
+        error: `Total voted (${totalVoted}) cannot exceed registered voters (${registered})`,
+      })
+    }
+    if (rejected > totalVoted) {
+      return reply.status(400).send({
+        error: `Rejected ballots (${rejected}) cannot exceed total voted (${totalVoted})`,
+      })
+    }
+
+    const validVotes = totalVoted - rejected
+    if (candidateSum !== validVotes) {
+      return reply.status(400).send({
+        error: `Sum of candidate votes (${candidateSum}) must equal valid votes (${validVotes} = totalVoted − rejected)`,
+      })
+    }
+
+    const totalRegistered =
+      registered != null ? registered : body.totalRegistered ?? null
+
+    try {
+      const stationResult = await prisma.stationResult.create({
+        data: {
+          pollingStationId: body.pollingStationId,
+          raceId: body.raceId,
+          submittedById: user.id,
+          totalRegistered,
+          totalVoted,
+          rejectedBallots: rejected,
+          clientSubmittedAt: new Date(body.clientSubmittedAt),
+          isOffline: body.isOffline ?? false,
+          formPhotoUrl: body.formPhotoUrl ?? null,
+          formPhotoHash: body.formPhotoHash ?? null,
+          deviceInfo: body.deviceInfo ?? undefined,
+          status: 'SUBMITTED',
+          votes: {
+            create: body.votes.map((v) => ({
+              candidateId: v.candidateId,
+              votes: v.votes,
+            })),
+          },
+        },
+        include: {
+          votes: {
+            include: {
+              candidate: {
+                select: { id: true, name: true, code: true, party: true },
+              },
             },
           },
-        },
-        pollingStation: {
-          select: { id: true, code: true, name: true },
-        },
-        race: {
-          select: { id: true, position: true },
-        },
-      },
-    })
-    // Audit log (best-effort)
-    try {
-      await prisma.auditLog.create({
-        data: {
-          userId: user.id,
-          action: 'RESULT_SUBMITTED',
-          entityType: 'StationResult',
-          entityId: stationResult.id,
-          details: {
-            pollingStationId: body.pollingStationId,
-            raceId: body.raceId,
-            totalVoted,
-            isOffline: body.isOffline ?? false,
+          pollingStation: {
+            select: { id: true, code: true, name: true },
           },
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'] ?? null,
+          race: {
+            select: { id: true, position: true },
+          },
         },
       })
-    } catch (auditError) {
-      console.error('Audit log failed (result still saved):', auditError)
-    }
-    return reply.status(201).send({ data: stationResult })
-  } catch (error: any) {
-    if (error.code === 'P2002') {
-      return reply.status(409).send({
-        error: 'Results for this polling station and race have already been submitted',
-      })
-    }
-    if (error.code === 'P2003') {
-      return reply.status(400).send({
-        error: 'Invalid pollingStationId, raceId or candidateId',
-      })
-    }
-    throw error
-  }
-})
 
-/**
- * List results (optional filters)
- */
+      try {
+        await prisma.auditLog.create({
+          data: {
+            userId: user.id,
+            action: 'RESULT_SUBMITTED',
+            entityType: 'StationResult',
+            entityId: stationResult.id,
+            details: {
+              pollingStationId: body.pollingStationId,
+              raceId: body.raceId,
+              totalVoted,
+              isOffline: body.isOffline ?? false,
+            },
+            ipAddress: request.ip,
+            userAgent: request.headers['user-agent'] ?? null,
+          },
+        })
+      } catch (auditError) {
+        console.error('Audit log failed (result still saved):', auditError)
+      }
+
+      return reply.status(201).send({ data: stationResult })
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return reply.status(409).send({
+          error:
+            'Results for this polling station and race have already been submitted',
+        })
+      }
+      if (error.code === 'P2003') {
+        return reply.status(400).send({
+          error: 'Invalid pollingStationId, raceId or candidateId',
+        })
+      }
+      throw error
+    }
+  }
+)
+
 app.get('/results', async (request) => {
   const { raceId, pollingStationId, status } = request.query as {
     raceId?: string
@@ -763,9 +780,6 @@ app.get('/results', async (request) => {
   return { data: results }
 })
 
-/**
- * Get a single result by ID
- */
 app.get('/results/:id', async (request, reply) => {
   const { id } = request.params as { id: string }
 
@@ -820,11 +834,31 @@ app.get('/results/:id', async (request, reply) => {
 })
 
 // ======================
-// AGGREGATION (REAL-TIME TOTALS)
+// AGGREGATION
 // ======================
 
-function buildCandidateTotals(votes: { candidateId: string; votes: number; candidate: { id: string; name: string; code: string | null; party: string | null } }[]) {
-  const map = new Map<string, { candidateId: string; name: string; code: string | null; party: string | null; totalVotes: number }>()
+function buildCandidateTotals(
+  votes: {
+    candidateId: string
+    votes: number
+    candidate: {
+      id: string
+      name: string
+      code: string | null
+      party: string | null
+    }
+  }[]
+) {
+  const map = new Map<
+    string,
+    {
+      candidateId: string
+      name: string
+      code: string | null
+      party: string | null
+      totalVotes: number
+    }
+  >()
 
   for (const v of votes) {
     const existing = map.get(v.candidateId)
@@ -846,7 +880,6 @@ function buildCandidateTotals(votes: { candidateId: string; votes: number; candi
 
 app.get('/results/aggregate/national', async (request, reply) => {
   const { raceId } = request.query as { raceId?: string }
-
   if (!raceId) {
     return reply.status(400).send({ error: 'raceId is required' })
   }
@@ -866,16 +899,17 @@ app.get('/results/aggregate/national', async (request, reply) => {
 
   const allVotes = results.flatMap((r) => r.votes)
   const candidates = buildCandidateTotals(allVotes)
-
   const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
-  const totalRejected = results.reduce((sum, r) => sum + (r.rejectedBallots ?? 0), 0)
-  const stationsReported = results.length
+  const totalRejected = results.reduce(
+    (sum, r) => sum + (r.rejectedBallots ?? 0),
+    0
+  )
 
   return {
     data: {
       level: 'NATIONAL',
       raceId,
-      stationsReported,
+      stationsReported: results.length,
       totalVoted,
       totalRejected,
       candidates,
@@ -886,7 +920,6 @@ app.get('/results/aggregate/national', async (request, reply) => {
 app.get('/results/aggregate/county/:countyId', async (request, reply) => {
   const { countyId } = request.params as { countyId: string }
   const { raceId } = request.query as { raceId?: string }
-
   if (!raceId) {
     return reply.status(400).send({ error: 'raceId is required' })
   }
@@ -923,9 +956,11 @@ app.get('/results/aggregate/county/:countyId', async (request, reply) => {
 
   const allVotes = results.flatMap((r) => r.votes)
   const candidates = buildCandidateTotals(allVotes)
-
   const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
-  const totalRejected = results.reduce((sum, r) => sum + (r.rejectedBallots ?? 0), 0)
+  const totalRejected = results.reduce(
+    (sum, r) => sum + (r.rejectedBallots ?? 0),
+    0
+  )
 
   return {
     data: {
@@ -940,58 +975,61 @@ app.get('/results/aggregate/county/:countyId', async (request, reply) => {
   }
 })
 
-app.get('/results/aggregate/constituency/:constituencyId', async (request, reply) => {
-  const { constituencyId } = request.params as { constituencyId: string }
-  const { raceId } = request.query as { raceId?: string }
+app.get(
+  '/results/aggregate/constituency/:constituencyId',
+  async (request, reply) => {
+    const { constituencyId } = request.params as { constituencyId: string }
+    const { raceId } = request.query as { raceId?: string }
+    if (!raceId) {
+      return reply.status(400).send({ error: 'raceId is required' })
+    }
 
-  if (!raceId) {
-    return reply.status(400).send({ error: 'raceId is required' })
-  }
-
-  const results = await prisma.stationResult.findMany({
-    where: {
-      raceId,
-      status: 'SUBMITTED',
-      pollingStation: {
-        ward: {
-          constituencyId,
-        },
-      },
-    },
-    include: {
-      votes: {
-        include: {
-          candidate: {
-            select: { id: true, name: true, code: true, party: true },
+    const results = await prisma.stationResult.findMany({
+      where: {
+        raceId,
+        status: 'SUBMITTED',
+        pollingStation: {
+          ward: {
+            constituencyId,
           },
         },
       },
-    },
-  })
+      include: {
+        votes: {
+          include: {
+            candidate: {
+              select: { id: true, name: true, code: true, party: true },
+            },
+          },
+        },
+      },
+    })
 
-  const allVotes = results.flatMap((r) => r.votes)
-  const candidates = buildCandidateTotals(allVotes)
+    const allVotes = results.flatMap((r) => r.votes)
+    const candidates = buildCandidateTotals(allVotes)
+    const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
+    const totalRejected = results.reduce(
+      (sum, r) => sum + (r.rejectedBallots ?? 0),
+      0
+    )
 
-  const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
-  const totalRejected = results.reduce((sum, r) => sum + (r.rejectedBallots ?? 0), 0)
-
-  return {
-    data: {
-      level: 'CONSTITUENCY',
-      constituencyId,
-      raceId,
-      stationsReported: results.length,
-      totalVoted,
-      totalRejected,
-      candidates,
-    },
+    return {
+      data: {
+        level: 'CONSTITUENCY',
+        constituencyId,
+        raceId,
+        stationsReported: results.length,
+        totalVoted,
+        totalRejected,
+        candidates,
+      },
+    }
   }
-})
+)
 
 app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
   const { wardId } = request.params as { wardId: string }
   const { raceId } = request.query as { raceId?: string }
-
   if (!raceId) {
     return reply.status(400).send({ error: 'raceId is required' })
   }
@@ -1020,9 +1058,11 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
 
   const allVotes = results.flatMap((r) => r.votes)
   const candidates = buildCandidateTotals(allVotes)
-
   const totalVoted = results.reduce((sum, r) => sum + (r.totalVoted ?? 0), 0)
-  const totalRejected = results.reduce((sum, r) => sum + (r.rejectedBallots ?? 0), 0)
+  const totalRejected = results.reduce(
+    (sum, r) => sum + (r.rejectedBallots ?? 0),
+    0
+  )
 
   return {
     data: {
@@ -1044,7 +1084,7 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
 })
 
 // ======================
-// ADMIN
+// ADMIN (platform SUPER_ADMIN)
 // ======================
 
 app.get(
@@ -1144,6 +1184,7 @@ app.post(
       userId?: string
       pollingStationId?: string
     }
+    const admin = request.user as { id: string }
 
     if (!body.userId || !body.pollingStationId) {
       return reply.status(400).send({
@@ -1169,6 +1210,7 @@ app.post(
         data: {
           userId: body.userId,
           pollingStationId: body.pollingStationId,
+          assignedById: admin.id,
         },
         include: {
           pollingStation: {
@@ -1216,6 +1258,389 @@ app.delete(
 )
 
 // ======================
+// POSITION ADMIN (OPS)
+// ======================
+
+type ScopeLevel = 'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD'
+
+function validateScopeBody(body: {
+  level?: string
+  countyId?: string | null
+  constituencyId?: string | null
+  wardId?: string | null
+}): string | null {
+  const level = body.level as ScopeLevel
+  if (!['NATIONAL', 'COUNTY', 'CONSTITUENCY', 'WARD'].includes(level)) {
+    return 'level must be NATIONAL, COUNTY, CONSTITUENCY or WARD'
+  }
+  if (level === 'NATIONAL') return null
+  if (!body.countyId) return 'countyId is required for this level'
+  if (level === 'COUNTY') return null
+  if (!body.constituencyId) return 'constituencyId is required for this level'
+  if (level === 'CONSTITUENCY') return null
+  if (!body.wardId) return 'wardId is required for WARD level'
+  return null
+}
+
+function stationWhereFromScope(scope: {
+  level: string
+  countyId: string | null
+  constituencyId: string | null
+  wardId: string | null
+}) {
+  if (scope.level === 'WARD' && scope.wardId) {
+    return { wardId: scope.wardId }
+  }
+  if (scope.level === 'CONSTITUENCY' && scope.constituencyId) {
+    return { ward: { constituencyId: scope.constituencyId } }
+  }
+  if (scope.level === 'COUNTY' && scope.countyId) {
+    return { ward: { constituency: { countyId: scope.countyId } } }
+  }
+  return {}
+}
+
+app.post(
+  '/admin/position-admins',
+  { preHandler: [app.requireSuperAdmin] },
+  async (request, reply) => {
+    const body = request.body as {
+      phone?: string
+      name?: string
+      raceId?: string
+      level?: string
+      countyId?: string | null
+      constituencyId?: string | null
+      wardId?: string | null
+    }
+
+    if (!body.phone || !body.name || !body.raceId || !body.level) {
+      return reply.status(400).send({
+        error: 'phone, name, raceId and level are required',
+      })
+    }
+
+    const scopeErr = validateScopeBody(body)
+    if (scopeErr) return reply.status(400).send({ error: scopeErr })
+
+    const phone = body.phone.replace(/\D/g, '')
+    if (!/^2547\d{8}$/.test(phone)) {
+      return reply
+        .status(400)
+        .send({ error: 'Phone must be 2547XXXXXXXX (12 digits)' })
+    }
+
+    const race = await prisma.race.findUnique({ where: { id: body.raceId } })
+    if (!race) return reply.status(400).send({ error: 'Invalid raceId' })
+
+    try {
+      const user = await prisma.user.create({
+        data: {
+          phone,
+          name: body.name.trim(),
+          role: 'POSITION_ADMIN',
+          isActive: true,
+          positionAdminScopes: {
+            create: {
+              raceId: body.raceId,
+              level: body.level as ScopeLevel,
+              countyId:
+                body.level === 'NATIONAL' ? null : body.countyId || null,
+              constituencyId:
+                body.level === 'NATIONAL' || body.level === 'COUNTY'
+                  ? null
+                  : body.constituencyId || null,
+              wardId: body.level === 'WARD' ? body.wardId || null : null,
+            },
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          role: true,
+          positionAdminScopes: {
+            include: {
+              race: { select: { id: true, position: true, scope: true } },
+              county: { select: { id: true, name: true, code: true } },
+              constituency: {
+                select: { id: true, name: true, code: true },
+              },
+              ward: { select: { id: true, name: true, code: true } },
+            },
+          },
+        },
+      })
+      return reply.status(201).send({ data: user })
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return reply.status(409).send({ error: 'Phone already registered' })
+      }
+      throw error
+    }
+  }
+)
+
+app.get(
+  '/admin/position-admins',
+  { preHandler: [app.requireSuperAdmin] },
+  async () => {
+    const users = await prisma.user.findMany({
+      where: { role: 'POSITION_ADMIN' },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        role: true,
+        isActive: true,
+        positionAdminScopes: {
+          include: {
+            race: { select: { id: true, position: true, scope: true } },
+            county: { select: { id: true, name: true, code: true } },
+            constituency: { select: { id: true, name: true, code: true } },
+            ward: { select: { id: true, name: true, code: true } },
+          },
+        },
+      },
+    })
+    return { data: users }
+  }
+)
+
+app.get(
+  '/ops/me',
+  { preHandler: [app.requirePositionAdmin] },
+  async (request, reply) => {
+    const { id } = request.user as { id: string }
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        role: true,
+        isActive: true,
+        positionAdminScopes: {
+          include: {
+            race: { select: { id: true, position: true, scope: true } },
+            county: { select: { id: true, name: true, code: true } },
+            constituency: { select: { id: true, name: true, code: true } },
+            ward: { select: { id: true, name: true, code: true } },
+          },
+        },
+      },
+    })
+
+    if (!user || !user.isActive) {
+      return reply.status(401).send({ error: 'User not found or inactive' })
+    }
+
+    return { data: user }
+  }
+)
+
+app.get(
+  '/ops/results/summary',
+  { preHandler: [app.requirePositionAdmin] },
+  async (request, reply) => {
+    const { id: adminId, role } = request.user as {
+      id: string
+      role: string
+    }
+    const { scopeId } = request.query as { scopeId?: string }
+
+    if (!scopeId) {
+      return reply.status(400).send({ error: 'scopeId is required' })
+    }
+
+    const scope = await prisma.positionAdminScope.findFirst({
+      where:
+        role === 'SUPER_ADMIN'
+          ? { id: scopeId }
+          : { id: scopeId, userId: adminId },
+    })
+
+    if (!scope) {
+      return reply.status(404).send({ error: 'Scope not found' })
+    }
+
+    const myAssignments = await prisma.agentAssignment.findMany({
+      where: { assignedById: adminId },
+      select: { userId: true },
+    })
+    const myAgentIds = [...new Set(myAssignments.map((a) => a.userId))]
+    const stationFilter = stationWhereFromScope(scope)
+
+    const results = await prisma.stationResult.findMany({
+      where: {
+        raceId: scope.raceId,
+        status: 'SUBMITTED',
+        submittedById: myAgentIds.length ? { in: myAgentIds } : { in: [] },
+        pollingStation: stationFilter,
+      },
+      include: {
+        votes: {
+          include: {
+            candidate: {
+              select: { id: true, name: true, code: true, party: true },
+            },
+          },
+        },
+        pollingStation: {
+          select: { id: true, code: true, name: true },
+        },
+      },
+    })
+
+    const allVotes = results.flatMap((r) => r.votes)
+    const candidates = buildCandidateTotals(allVotes)
+    const totalVoted = results.reduce((s, r) => s + (r.totalVoted ?? 0), 0)
+    const totalRejected = results.reduce(
+      (s, r) => s + (r.rejectedBallots ?? 0),
+      0
+    )
+
+    return {
+      data: {
+        scopeId: scope.id,
+        raceId: scope.raceId,
+        level: scope.level,
+        stationsReported: results.length,
+        totalVoted,
+        totalRejected,
+        candidates,
+        stations: results.map((r) => ({
+          id: r.pollingStation.id,
+          code: r.pollingStation.code,
+          name: r.pollingStation.name,
+          totalVoted: r.totalVoted,
+          candidates: r.votes.map((v) => ({
+            candidateId: v.candidateId,
+            name: v.candidate.name,
+            party: v.candidate.party,
+            votes: v.votes,
+          })),
+        })),
+      },
+    }
+  }
+)
+
+app.post(
+  '/ops/agents',
+  { preHandler: [app.requirePositionAdmin] },
+  async (request, reply) => {
+    const body = request.body as { phone?: string; name?: string }
+    if (!body.phone || !body.name) {
+      return reply.status(400).send({ error: 'phone and name are required' })
+    }
+    const phone = body.phone.replace(/\D/g, '')
+    if (!/^2547\d{8}$/.test(phone)) {
+      return reply
+        .status(400)
+        .send({ error: 'Phone must be 2547XXXXXXXX (12 digits)' })
+    }
+    try {
+      const user = await prisma.user.create({
+        data: {
+          phone,
+          name: body.name.trim(),
+          role: 'AGENT',
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          role: true,
+          isActive: true,
+        },
+      })
+      return reply.status(201).send({ data: user })
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return reply.status(409).send({ error: 'Phone already registered' })
+      }
+      throw error
+    }
+  }
+)
+
+app.post(
+  '/ops/assignments',
+  { preHandler: [app.requirePositionAdmin] },
+  async (request, reply) => {
+    const admin = request.user as { id: string; role: string }
+    const body = request.body as {
+      userId?: string
+      pollingStationId?: string
+      scopeId?: string
+    }
+
+    if (!body.userId || !body.pollingStationId || !body.scopeId) {
+      return reply.status(400).send({
+        error: 'userId, pollingStationId and scopeId are required',
+      })
+    }
+
+    const scope = await prisma.positionAdminScope.findFirst({
+      where:
+        admin.role === 'SUPER_ADMIN'
+          ? { id: body.scopeId }
+          : { id: body.scopeId, userId: admin.id },
+    })
+    if (!scope) {
+      return reply.status(404).send({ error: 'Scope not found' })
+    }
+
+    const station = await prisma.pollingStation.findFirst({
+      where: {
+        id: body.pollingStationId,
+        ...stationWhereFromScope(scope),
+      },
+      select: { id: true },
+    })
+    if (!station) {
+      return reply.status(403).send({
+        error: 'Station is outside your administrative scope',
+      })
+    }
+
+    const agent = await prisma.user.findFirst({
+      where: { id: body.userId, role: 'AGENT', isActive: true },
+    })
+    if (!agent) {
+      return reply.status(400).send({ error: 'Invalid agent userId' })
+    }
+
+    try {
+      const assignment = await prisma.agentAssignment.create({
+        data: {
+          userId: body.userId,
+          pollingStationId: body.pollingStationId,
+          assignedById: admin.id,
+        },
+        include: {
+          pollingStation: {
+            select: { id: true, code: true, name: true },
+          },
+        },
+      })
+      return reply.status(201).send({ data: assignment })
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return reply
+          .status(409)
+          .send({ error: 'Agent already assigned to this station' })
+      }
+      throw error
+    }
+  }
+)
+
+// ======================
 // ROOT
 // ======================
 
@@ -1258,7 +1683,13 @@ app.get('/', async () => {
       'POST /admin/agents',
       'POST /admin/assignments',
       'DELETE /admin/assignments',
-    ]
+      'POST /admin/position-admins',
+      'GET  /admin/position-admins',
+      'GET  /ops/me',
+      'GET  /ops/results/summary?scopeId=',
+      'POST /ops/agents',
+      'POST /ops/assignments',
+    ],
   }
 })
 

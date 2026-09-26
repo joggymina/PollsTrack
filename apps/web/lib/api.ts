@@ -63,6 +63,7 @@ export type MeResponse = {
   phone: string
   role: string
   isActive: boolean
+  organizationId?: string | null
   assignedStations: AssignedStation[]
 }
 
@@ -153,6 +154,30 @@ export type PositionAdminUser = {
   positionAdminScopes: PositionAdminScope[]
 }
 
+// ---------- Organizations ----------
+export type Organization = {
+  id: string
+  name: string
+  slug: string
+  primaryLevel: 'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD'
+  countyId: string | null
+  constituencyId: string | null
+  wardId: string | null
+  county?: { id: string; name: string; code: string } | null
+  constituency?: { id: string; name: string; code: string } | null
+  ward?: { id: string; name: string; code: string } | null
+}
+
+export type CreateOrgPayload = {
+  name: string
+  primaryLevel: 'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD'
+  countyId?: string | null
+  constituencyId?: string | null
+  wardId?: string | null
+  adminName: string
+  adminPhone: string
+}
+
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     cache: 'no-store',
@@ -166,7 +191,6 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 // ---------- Public dashboard helpers ----------
-
 export async function getNationalAggregate(
   raceId: string
 ): Promise<AggregateResult> {
@@ -275,10 +299,15 @@ export async function getResults(): Promise<StationResultSummary[]> {
 }
 
 // ---------- Auth + Agent helpers ----------
-
 export async function login(phone: string): Promise<{
   token: string
-  user: { id: string; name: string; phone: string; role: string }
+  user: {
+    id: string
+    name: string
+    phone: string
+    role: string
+    organizationId?: string | null
+  }
 }> {
   return fetchJson('/auth/login', {
     method: 'POST',
@@ -319,8 +348,46 @@ export async function submitResults(
   })
 }
 
-// ---------- Admin helpers ----------
+// ---------- Organization helpers ----------
+export async function createOrganization(body: CreateOrgPayload): Promise<{
+  organization: Organization
+  user: {
+    id: string
+    name: string
+    phone: string
+    role: string
+    organizationId: string
+  }
+  token: string
+}> {
+  const data = await fetchJson<{
+    data: {
+      organization: Organization
+      user: {
+        id: string
+        name: string
+        phone: string
+        role: string
+        organizationId: string
+      }
+      token: string
+    }
+  }>('/organizations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return data.data
+}
 
+export async function getMyOrganization(token: string): Promise<Organization> {
+  const data = await fetchJson<{ data: Organization }>('/organizations/me', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  return data.data
+}
+
+// ---------- Admin helpers ----------
 export async function getAdminAgents(token: string): Promise<AdminAgent[]> {
   const data = await fetchJson<{ data: AdminAgent[] }>('/admin/agents', {
     headers: { Authorization: `Bearer ${token}` },
@@ -407,7 +474,6 @@ export async function unassignStation(
 }
 
 // ---------- Position admin (ops) ----------
-
 export async function createPositionAdmin(
   token: string,
   body: {

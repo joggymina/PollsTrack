@@ -102,6 +102,11 @@ export default function LoginPage() {
                 ? `Enter phone (${digitsOnly.length}/10)`
                 : 'Sign In'}
           </button>
+
+          <Link href="/register" className="text-blue-600 font-medium">
+  Create organization
+</Link>
+
         </form>
 
         <p className="text-center text-sm text-gray-400 mt-6">

@@ -8,6 +8,7 @@ export type AuthUser = {
   name: string
   phone: string
   role: string
+  organizationId?: string | null
 }
 
 export function getToken(): string | null {

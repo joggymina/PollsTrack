@@ -12,37 +12,40 @@ datasource db {
 // ======================
 
 model County {
-  id             String         @id @default(cuid())
-  code           String         @unique
-  name           String
-  constituencies Constituency[]
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id                  String               @id @default(cuid())
+  code                String               @unique
+  name                String
+  constituencies      Constituency[]
+  positionAdminScopes PositionAdminScope[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 }
 
 model Constituency {
-  id        String   @id @default(cuid())
-  code      String
-  name      String
-  countyId  String
-  county    County   @relation(fields: [countyId], references: [id])
-  wards     Ward[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                  String               @id @default(cuid())
+  code                String
+  name                String
+  countyId            String
+  county              County               @relation(fields: [countyId], references: [id])
+  wards               Ward[]
+  positionAdminScopes PositionAdminScope[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   @@unique([countyId, code])
   @@index([countyId])
 }
 
 model Ward {
-  id              String           @id @default(cuid())
-  code            String
-  name            String
-  constituencyId  String
-  constituency    Constituency     @relation(fields: [constituencyId], references: [id])
-  pollingStations PollingStation[]
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id                  String               @id @default(cuid())
+  code                String
+  name                String
+  constituencyId      String
+  constituency        Constituency         @relation(fields: [constituencyId], references: [id])
+  pollingStations     PollingStation[]
+  positionAdminScopes PositionAdminScope[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   @@unique([constituencyId, code])
   @@index([constituencyId])
@@ -71,6 +74,7 @@ model PollingStation {
 
 enum UserRole {
   SUPER_ADMIN
+  POSITION_ADMIN
   NATIONAL_VIEWER
   COUNTY_VIEWER
   CONSTITUENCY_VIEWER
@@ -78,31 +82,69 @@ enum UserRole {
   AGENT
 }
 
+enum AdminScopeLevel {
+  NATIONAL
+  COUNTY
+  CONSTITUENCY
+  WARD
+}
+
 model User {
-  id               String            @id @default(cuid())
-  phone            String            @unique
-  name             String
-  role             UserRole          @default(AGENT)
-  isActive         Boolean           @default(true)
-  countyId         String?
-  constituencyId   String?
-  wardId           String?
-  agentAssignments AgentAssignment[]
-  submittedResults StationResult[]
-  auditLogs        AuditLog[]
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  id                 String               @id @default(cuid())
+  phone              String               @unique
+  name               String
+  role               UserRole             @default(AGENT)
+  isActive           Boolean              @default(true)
+  countyId           String?
+  constituencyId     String?
+  wardId             String?
+  agentAssignments   AgentAssignment[]    @relation("AgentAssignments")
+  assignmentsCreated AgentAssignment[]    @relation("AssignmentsCreated")
+  submittedResults   StationResult[]
+  auditLogs          AuditLog[]
+  positionAdminScopes PositionAdminScope[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+}
+
+model PositionAdminScope {
+  id             String          @id @default(cuid())
+  userId         String
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  raceId         String
+  race           Race            @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  level          AdminScopeLevel
+
+  countyId       String?
+  county         County?         @relation(fields: [countyId], references: [id])
+  constituencyId String?
+  constituency   Constituency?   @relation(fields: [constituencyId], references: [id])
+  wardId         String?
+  ward           Ward?           @relation(fields: [wardId], references: [id])
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([userId])
+  @@index([raceId])
+  @@index([countyId])
+  @@index([constituencyId])
+  @@index([wardId])
+  @@unique([userId, raceId, level, countyId, constituencyId, wardId])
 }
 
 model AgentAssignment {
   id               String         @id @default(cuid())
   userId           String
-  user             User           @relation(fields: [userId], references: [id])
+  user             User           @relation("AgentAssignments", fields: [userId], references: [id])
   pollingStationId String
   pollingStation   PollingStation @relation(fields: [pollingStationId], references: [id])
+  assignedById     String?
+  assignedBy       User?          @relation("AssignmentsCreated", fields: [assignedById], references: [id])
   createdAt        DateTime       @default(now())
 
   @@unique([userId, pollingStationId])
+  @@index([assignedById])
 }
 
 // ======================
@@ -122,18 +164,19 @@ model Election {
 }
 
 model Race {
-  id             String          @id @default(cuid())
-  electionId     String
-  election       Election        @relation(fields: [electionId], references: [id])
-  position       String
-  scope          String
-  countyId       String?
-  constituencyId String?
-  wardId         String?
-  candidates     Candidate[]
-  results        StationResult[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id                  String               @id @default(cuid())
+  electionId          String
+  election            Election             @relation(fields: [electionId], references: [id])
+  position            String
+  scope               String
+  countyId            String?
+  constituencyId      String?
+  wardId              String?
+  candidates          Candidate[]
+  results             StationResult[]
+  positionAdminScopes PositionAdminScope[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 }
 
 model Candidate {
@@ -155,26 +198,26 @@ model Candidate {
 // ======================
 
 model StationResult {
-  id                String          @id @default(cuid())
+  id                String         @id @default(cuid())
   pollingStationId  String
-  pollingStation    PollingStation  @relation(fields: [pollingStationId], references: [id])
+  pollingStation    PollingStation @relation(fields: [pollingStationId], references: [id])
   raceId            String
-  race              Race            @relation(fields: [raceId], references: [id])
+  race              Race           @relation(fields: [raceId], references: [id])
   submittedById     String
-  submittedBy       User            @relation(fields: [submittedById], references: [id])
+  submittedBy       User           @relation(fields: [submittedById], references: [id])
   totalRegistered   Int?
   totalVoted        Int?
-  rejectedBallots   Int             @default(0)
+  rejectedBallots   Int            @default(0)
   formPhotoUrl      String?
   formPhotoHash     String?
   clientSubmittedAt DateTime
-  serverReceivedAt  DateTime        @default(now())
-  isOffline         Boolean         @default(false)
+  serverReceivedAt  DateTime       @default(now())
+  isOffline         Boolean        @default(false)
   deviceInfo        Json?
-  status            String          @default("SUBMITTED")
+  status            String         @default("SUBMITTED")
   votes             ResultVote[]
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   @@unique([pollingStationId, raceId])
   @@index([pollingStationId])

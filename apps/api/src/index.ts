@@ -1365,6 +1365,8 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
     },
   }
 })
+
+
 // ======================
 // ADMIN: CANDIDATES
 // ======================
@@ -1391,7 +1393,6 @@ app.post(
         .send({ error: 'No organization linked to your account' })
     }
 
-    // Race must belong to this org
     const race = await prisma.race.findFirst({
       where: {
         id: body.raceId,
@@ -1405,12 +1406,26 @@ app.post(
       })
     }
 
+    const code = body.code?.trim() || null
+
+    if (code) {
+      const duplicate = await prisma.candidate.findFirst({
+        where: { raceId: body.raceId, code },
+        select: { id: true, name: true },
+      })
+      if (duplicate) {
+        return reply.status(409).send({
+          error: `Code "${code}" is already used by ${duplicate.name} in this race`,
+        })
+      }
+    }
+
     try {
       const candidate = await prisma.candidate.create({
         data: {
           raceId: body.raceId,
           name: body.name.trim(),
-          code: body.code?.trim() || null,
+          code,
           party: body.party?.trim() || null,
           isActive: true,
         },
@@ -1425,6 +1440,11 @@ app.post(
       })
       return reply.status(201).send({ data: candidate })
     } catch (error: any) {
+      if (error.code === 'P2002') {
+        return reply.status(409).send({
+          error: 'A candidate with this code already exists in this race',
+        })
+      }
       if (error.code === 'P2003') {
         return reply.status(400).send({ error: 'Invalid raceId' })
       }
@@ -1457,35 +1477,66 @@ app.patch(
         id,
         race: { election: { organizationId: orgId } },
       },
-      select: { id: true },
+      select: { id: true, raceId: true },
     })
     if (!existing) {
       return reply.status(404).send({ error: 'Candidate not found' })
     }
 
-    const candidate = await prisma.candidate.update({
-      where: { id },
-      data: {
-        ...(body.name !== undefined ? { name: body.name.trim() } : {}),
-        ...(body.code !== undefined ? { code: body.code?.trim() || null } : {}),
-        ...(body.party !== undefined
-          ? { party: body.party?.trim() || null }
-          : {}),
-        ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
-      },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        party: true,
-        raceId: true,
-        isActive: true,
-      },
-    })
+    if (body.code !== undefined) {
+      const code = body.code?.trim() || null
+      if (code) {
+        const duplicate = await prisma.candidate.findFirst({
+          where: {
+            raceId: existing.raceId,
+            code,
+            NOT: { id },
+          },
+          select: { id: true, name: true },
+        })
+        if (duplicate) {
+          return reply.status(409).send({
+            error: `Code "${code}" is already used by ${duplicate.name} in this race`,
+          })
+        }
+      }
+    }
 
-    return { data: candidate }
+    try {
+      const candidate = await prisma.candidate.update({
+        where: { id },
+        data: {
+          ...(body.name !== undefined ? { name: body.name.trim() } : {}),
+          ...(body.code !== undefined
+            ? { code: body.code?.trim() || null }
+            : {}),
+          ...(body.party !== undefined
+            ? { party: body.party?.trim() || null }
+            : {}),
+          ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+        },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          party: true,
+          raceId: true,
+          isActive: true,
+        },
+      })
+      return { data: candidate }
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        return reply.status(409).send({
+          error: 'A candidate with this code already exists in this race',
+        })
+      }
+      throw error
+    }
   }
 )
+
+
 // ======================
 // ADMIN (platform SUPER_ADMIN)
 // ======================

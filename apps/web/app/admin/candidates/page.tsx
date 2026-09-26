@@ -41,22 +41,39 @@ export default function AdminCandidatesPage() {
         setRaces(list)
         if (list[0]) setRaceId(list[0].id)
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load races'))
       .finally(() => setLoading(false))
   }, [router])
 
   useEffect(() => {
     if (!raceId) return
     setError('')
+    setMessage('')
     getCandidates(raceId)
       .then(setCandidates)
-      .catch((e) => setError(e.message))
+      .catch((e) =>
+        setError(e instanceof Error ? e.message : 'Failed to load candidates')
+      )
   }, [raceId])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     const token = getToken()
     if (!token || !raceId || !name.trim()) return
+
+    const trimmedCode = code.trim()
+    if (trimmedCode) {
+      const taken = candidates.find(
+        (c) => c.code?.toLowerCase() === trimmedCode.toLowerCase()
+      )
+      if (taken) {
+        setError(
+          `Code "${trimmedCode}" is already used by ${taken.name} in this race`
+        )
+        setMessage('')
+        return
+      }
+    }
 
     setSaving(true)
     setError('')
@@ -65,7 +82,7 @@ export default function AdminCandidatesPage() {
       await createCandidate(token, {
         raceId,
         name: name.trim(),
-        code: code.trim() || undefined,
+        code: trimmedCode || undefined,
         party: party.trim() || undefined,
       })
       setName('')
@@ -74,9 +91,11 @@ export default function AdminCandidatesPage() {
       setMessage('Candidate added')
       const list = await getCandidates(raceId)
       setCandidates(list)
-    } catch (err: any) {
-      setError(err.message || 'Failed to add candidate')
-      if (String(err.message).includes('401')) {
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : 'Failed to add candidate'
+      setError(msg)
+      if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
         clearAuth()
         router.replace('/login')
       }
@@ -120,11 +139,15 @@ export default function AdminCandidatesPage() {
           onChange={(e) => setRaceId(e.target.value)}
           className={inputClass}
         >
-          {races.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.position}
-            </option>
-          ))}
+          {races.length === 0 ? (
+            <option value="">No races found</option>
+          ) : (
+            races.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.position}
+              </option>
+            ))
+          )}
         </select>
       </div>
 
@@ -161,7 +184,7 @@ export default function AdminCandidatesPage() {
         {message && <p className="text-sm text-green-600">{message}</p>}
         <button
           type="submit"
-          disabled={saving || !name.trim()}
+          disabled={saving || !name.trim() || !raceId}
           className="w-full rounded-lg bg-blue-600 text-white py-2.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
         >
           {saving ? 'Saving…' : 'Add candidate'}

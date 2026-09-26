@@ -242,6 +242,7 @@ model Candidate {
   updatedAt DateTime     @updatedAt
 
   @@index([raceId])
+  @@unique([raceId, code])
 }
 
 // ======================

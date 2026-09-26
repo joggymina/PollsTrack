@@ -32,12 +32,10 @@ export default function OpsHomePage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  // Create agent
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [creating, setCreating] = useState(false)
 
-  // Assign
   const [scopeId, setScopeId] = useState('')
   const [assignUserId, setAssignUserId] = useState('')
   const [stations, setStations] = useState<PollingStationOption[]>([])
@@ -52,16 +50,24 @@ export default function OpsHomePage() {
     const u = user || (await getOpsMe(t))
     setMe(u)
     const scopes = u.positionAdminScopes || []
+    const activeScopeId = scopeId || scopes[0]?.id
     if (!scopeId && scopes[0]) setScopeId(scopes[0].id)
 
-    const activeScopeId = scopeId || scopes[0]?.id
     if (activeScopeId) {
-      const res = await getOpsResultsSummary(t, activeScopeId)
-      setSummary(res.data)
+      try {
+        const res = await getOpsResultsSummary(t, activeScopeId)
+        setSummary(res.data)
+      } catch {
+        setSummary(null)
+      }
     }
 
-    const list = await getOpsAgents(t)
-    setAgents(list)
+    try {
+      const list = await getOpsAgents(t)
+      setAgents(list)
+    } catch {
+      // keep current local list if API fails
+    }
   }
 
   useEffect(() => {
@@ -80,7 +86,6 @@ export default function OpsHomePage() {
       .finally(() => setLoading(false))
   }, [router])
 
-  // Load stations only for WARD scope (or when scope has wardId)
   useEffect(() => {
     if (!scopeId || !me) return
     const scope = me.positionAdminScopes.find((s) => s.id === scopeId)
@@ -88,18 +93,14 @@ export default function OpsHomePage() {
 
     setStationId('')
     setStations([])
+    setError('')
 
-    // Prefer ward-level list; national/county would be huge — require ward for assign UI
     if (scope.level === 'WARD' && scope.ward?.id) {
       setStationsLoading(true)
       getPollingStations(scope.ward.id)
         .then(setStations)
         .catch((e) => setError(e.message))
         .finally(() => setStationsLoading(false))
-    } else if (scope.level === 'CONSTITUENCY') {
-      setError(
-        'Assign UI currently lists stations for WARD scopes. Use a ward-level scope, or we can extend cascade next.'
-      )
     }
   }, [scopeId, me])
 
@@ -114,10 +115,31 @@ export default function OpsHomePage() {
     }
     setCreating(true)
     try {
-      await createOpsAgent(token(), { name: name.trim(), phone: cleaned })
+      const res = await createOpsAgent(token(), {
+        name: name.trim(),
+        phone: cleaned,
+      })
+      const created = res.data
+
+      setAgents((prev) => {
+        if (prev.some((a) => a.id === created.id)) return prev
+        return [
+          ...prev,
+          {
+            id: created.id,
+            name: created.name,
+            phone: created.phone,
+            role: created.role || 'AGENT',
+            isActive: created.isActive ?? true,
+            stations: [],
+          },
+        ]
+      })
+      setAssignUserId(created.id)
       setName('')
       setPhone('')
-      setMessage('Agent created — now assign a station')
+      setMessage('Agent created — select a station and assign')
+      setTab('agents')
       await refreshAll()
     } catch (err: any) {
       setError(err.message || 'Create failed')
@@ -271,6 +293,9 @@ export default function OpsHomePage() {
             className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3"
           >
             <h2 className="font-semibold text-gray-900">Create agent</h2>
+            <p className="text-xs text-gray-400">
+              Agent will belong only to you (this ops account).
+            </p>
             <input
               className={inputClass}
               placeholder="Full name"
@@ -337,8 +362,7 @@ export default function OpsHomePage() {
               </select>
               {agents.length === 0 && (
                 <p className="text-xs text-gray-400 mt-1">
-                  Create an agent first (they appear here after first assign, or
-                  create then assign in one flow).
+                  No agents yet. Create one above — they appear here right away.
                 </p>
               )}
             </div>
@@ -389,7 +413,7 @@ export default function OpsHomePage() {
               >
                 <p className="font-semibold text-gray-900">{a.name}</p>
                 <p className="text-sm text-gray-500">{a.phone}</p>
-                {a.stations.length > 0 && (
+                {a.stations.length > 0 ? (
                   <ul className="mt-2 text-sm text-gray-700 space-y-0.5">
                     {a.stations.map((s) => (
                       <li key={s.id}>
@@ -398,6 +422,8 @@ export default function OpsHomePage() {
                       </li>
                     ))}
                   </ul>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-2">No station yet</p>
                 )}
               </div>
             ))}

@@ -47,26 +47,28 @@ app.get('/db-test', async () => {
 // ======================
 // AUTH
 // ======================
-
 app.post('/auth/login', async (request, reply) => {
   const body = request.body as { phone?: string }
-
   if (!body.phone || typeof body.phone !== 'string') {
     return reply.status(400).send({ error: 'phone is required' })
   }
-
   const phone = body.phone.trim()
-
   const user = await prisma.user.findUnique({
     where: { phone },
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      role: true,
+      isActive: true,
+      organizationId: true,
+    },
   })
-
   if (!user || !user.isActive) {
     return reply
       .status(401)
       .send({ error: 'Invalid phone number or account inactive' })
   }
-
   if (
     user.role !== 'AGENT' &&
     user.role !== 'SUPER_ADMIN' &&
@@ -74,14 +76,13 @@ app.post('/auth/login', async (request, reply) => {
   ) {
     return reply.status(403).send({ error: 'Account not allowed to login' })
   }
-
   const token = app.jwt.sign({
     id: user.id,
     phone: user.phone,
     name: user.name,
     role: user.role,
+    organizationId: user.organizationId,
   })
-
   return {
     token,
     user: {
@@ -89,9 +90,177 @@ app.post('/auth/login', async (request, reply) => {
       name: user.name,
       phone: user.phone,
       role: user.role,
+      organizationId: user.organizationId,
     },
   }
 })
+
+// ======================
+// ORGANIZATIONS
+// ======================
+function slugify(name: string) {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48)
+}
+
+app.post('/organizations', async (request, reply) => {
+  const body = request.body as {
+    name: string
+    primaryLevel: 'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD'
+    countyId?: string | null
+    constituencyId?: string | null
+    wardId?: string | null
+    adminName: string
+    adminPhone: string
+  }
+
+  if (!body.name || !body.primaryLevel || !body.adminName || !body.adminPhone) {
+    return reply.status(400).send({
+      error: 'name, primaryLevel, adminName and adminPhone are required',
+    })
+  }
+
+  const level = body.primaryLevel
+  if (level === 'COUNTY' && !body.countyId) {
+    return reply.status(400).send({ error: 'countyId required for COUNTY level' })
+  }
+  if (level === 'CONSTITUENCY' && (!body.countyId || !body.constituencyId)) {
+    return reply.status(400).send({
+      error: 'countyId and constituencyId required for CONSTITUENCY level',
+    })
+  }
+  if (
+    level === 'WARD' &&
+    (!body.countyId || !body.constituencyId || !body.wardId)
+  ) {
+    return reply.status(400).send({
+      error: 'countyId, constituencyId and wardId required for WARD level',
+    })
+  }
+
+  let countyId = body.countyId ?? null
+  let constituencyId = body.constituencyId ?? null
+  let wardId = body.wardId ?? null
+
+  if (level === 'NATIONAL') {
+    countyId = null
+    constituencyId = null
+    wardId = null
+  } else if (level === 'COUNTY') {
+    constituencyId = null
+    wardId = null
+  } else if (level === 'CONSTITUENCY') {
+    wardId = null
+  }
+
+  const phone = String(body.adminPhone).replace(/\s+/g, '')
+  const existing = await prisma.user.findUnique({ where: { phone } })
+  if (existing) {
+    return reply.status(409).send({ error: 'Phone already registered' })
+  }
+
+  let slug = slugify(body.name) || `org-${Date.now()}`
+  const slugTaken = await prisma.organization.findUnique({ where: { slug } })
+  if (slugTaken) slug = `${slug}-${Date.now().toString(36)}`
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const org = await tx.organization.create({
+        data: {
+          name: body.name.trim(),
+          slug,
+          primaryLevel: level,
+          countyId,
+          constituencyId,
+          wardId,
+        },
+      })
+
+      const admin = await tx.user.create({
+        data: {
+          name: body.adminName.trim(),
+          phone,
+          role: 'SUPER_ADMIN',
+          organizationId: org.id,
+        },
+      })
+
+      return { org, admin }
+    })
+
+    const token = app.jwt.sign({
+      id: result.admin.id,
+      phone: result.admin.phone,
+      name: result.admin.name,
+      role: result.admin.role,
+      organizationId: result.org.id,
+    })
+
+    return reply.status(201).send({
+      data: {
+        organization: result.org,
+        user: {
+          id: result.admin.id,
+          name: result.admin.name,
+          phone: result.admin.phone,
+          role: result.admin.role,
+          organizationId: result.org.id,
+        },
+        token,
+      },
+    })
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return reply.status(409).send({
+        error: 'Organization or phone already exists',
+      })
+    }
+    if (error.code === 'P2003') {
+      return reply.status(400).send({
+        error: 'Invalid county, constituency or ward id',
+      })
+    }
+    throw error
+  }
+})
+
+app.get(
+  '/organizations/me',
+  { preHandler: [app.authenticate] },
+  async (request, reply) => {
+    const payload = request.user as { id: string }
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.id },
+      select: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            primaryLevel: true,
+            countyId: true,
+            constituencyId: true,
+            wardId: true,
+            county: { select: { id: true, name: true, code: true } },
+            constituency: { select: { id: true, name: true, code: true } },
+            ward: { select: { id: true, name: true, code: true } },
+          },
+        },
+      },
+    })
+
+    if (!user?.organization) {
+      return reply.status(404).send({ error: 'No organization linked' })
+    }
+
+    return { data: user.organization }
+  }
+)
 
 // ======================
 // ME (current agent)
@@ -113,6 +282,7 @@ app.get(
         phone: true,
         role: true,
         isActive: true,
+        organizationId: true,
         agentAssignments: {
           select: {
             pollingStation: {
@@ -157,6 +327,7 @@ app.get(
         phone: user.phone,
         role: user.role,
         isActive: user.isActive,
+        organizationId: user.organizationId,
         assignedStations: user.agentAssignments.map((a) => a.pollingStation),
       },
     }
@@ -1741,6 +1912,8 @@ app.get('/', async () => {
       'POST /ops/agents',
       'POST /ops/assignments',
       'GET  /ops/agents',
+      'POST /organizations',
+      'GET  /organizations/me',
     ],
   }
 })

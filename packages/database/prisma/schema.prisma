@@ -17,6 +17,7 @@ model County {
   name                String
   constituencies      Constituency[]
   positionAdminScopes PositionAdminScope[]
+  organizations       Organization[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 }
@@ -29,6 +30,7 @@ model Constituency {
   county              County               @relation(fields: [countyId], references: [id])
   wards               Ward[]
   positionAdminScopes PositionAdminScope[]
+  organizations       Organization[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
@@ -44,6 +46,7 @@ model Ward {
   constituency        Constituency         @relation(fields: [constituencyId], references: [id])
   pollingStations     PollingStation[]
   positionAdminScopes PositionAdminScope[]
+  organizations       Organization[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
@@ -65,6 +68,40 @@ model PollingStation {
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
+  @@index([wardId])
+}
+
+// ======================
+// ORGANIZATIONS (TEAMS)
+// ======================
+
+enum OrgPrimaryLevel {
+  NATIONAL
+  COUNTY
+  CONSTITUENCY
+  WARD
+}
+
+model Organization {
+  id             String          @id @default(cuid())
+  name           String
+  slug           String          @unique
+  code           String?         @unique
+  primaryLevel   OrgPrimaryLevel @default(NATIONAL)
+  countyId       String?
+  county         County?         @relation(fields: [countyId], references: [id])
+  constituencyId String?
+  constituency   Constituency?   @relation(fields: [constituencyId], references: [id])
+  wardId         String?
+  ward           Ward?           @relation(fields: [wardId], references: [id])
+  isActive       Boolean         @default(true)
+  users          User[]
+  elections      Election[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([countyId])
+  @@index([constituencyId])
   @@index([wardId])
 }
 
@@ -95,6 +132,8 @@ model User {
   name                String
   role                UserRole             @default(AGENT)
   isActive            Boolean              @default(true)
+  organizationId      String?
+  organization        Organization?        @relation(fields: [organizationId], references: [id])
   countyId            String?
   constituencyId      String?
   wardId              String?
@@ -110,6 +149,7 @@ model User {
   updatedAt           DateTime             @updatedAt
 
   @@index([createdById])
+  @@index([organizationId])
 }
 
 model PositionAdminScope {
@@ -119,14 +159,12 @@ model PositionAdminScope {
   raceId         String
   race           Race            @relation(fields: [raceId], references: [id], onDelete: Cascade)
   level          AdminScopeLevel
-
   countyId       String?
   county         County?         @relation(fields: [countyId], references: [id])
   constituencyId String?
   constituency   Constituency?   @relation(fields: [constituencyId], references: [id])
   wardId         String?
   ward           Ward?           @relation(fields: [wardId], references: [id])
-
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -157,15 +195,19 @@ model AgentAssignment {
 // ======================
 
 model Election {
-  id        String    @id @default(cuid())
-  name      String
-  type      String
-  status    String    @default("DRAFT")
-  startDate DateTime?
-  endDate   DateTime?
-  races     Race[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id             String        @id @default(cuid())
+  name           String
+  type           String
+  status         String        @default("DRAFT")
+  startDate      DateTime?
+  endDate        DateTime?
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  races          Race[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([organizationId])
 }
 
 model Race {

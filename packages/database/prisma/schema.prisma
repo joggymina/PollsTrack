@@ -90,21 +90,26 @@ enum AdminScopeLevel {
 }
 
 model User {
-  id                 String               @id @default(cuid())
-  phone              String               @unique
-  name               String
-  role               UserRole             @default(AGENT)
-  isActive           Boolean              @default(true)
-  countyId           String?
-  constituencyId     String?
-  wardId             String?
-  agentAssignments   AgentAssignment[]    @relation("AgentAssignments")
-  assignmentsCreated AgentAssignment[]    @relation("AssignmentsCreated")
-  submittedResults   StationResult[]
-  auditLogs          AuditLog[]
+  id                  String               @id @default(cuid())
+  phone               String               @unique
+  name                String
+  role                UserRole             @default(AGENT)
+  isActive            Boolean              @default(true)
+  countyId            String?
+  constituencyId      String?
+  wardId              String?
+  createdById         String?
+  createdBy           User?                @relation("UsersCreated", fields: [createdById], references: [id])
+  createdUsers        User[]               @relation("UsersCreated")
+  agentAssignments    AgentAssignment[]    @relation("AgentAssignments")
+  assignmentsCreated  AgentAssignment[]    @relation("AssignmentsCreated")
+  submittedResults    StationResult[]
+  auditLogs           AuditLog[]
   positionAdminScopes PositionAdminScope[]
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([createdById])
 }
 
 model PositionAdminScope {

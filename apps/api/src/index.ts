@@ -1100,7 +1100,6 @@ function buildCandidateTotals(
       totalVotes: number
     }
   >()
-
   for (const v of votes) {
     const existing = map.get(v.candidateId)
     if (existing) {
@@ -1115,8 +1114,34 @@ function buildCandidateTotals(
       })
     }
   }
-
   return Array.from(map.values()).sort((a, b) => b.totalVotes - a.totalVotes)
+}
+
+/** Ensure raceId belongs to the resolved organization (if any). */
+async function assertRaceInOrg(
+  raceId: string,
+  organizationId: string | null
+): Promise<boolean> {
+  if (!organizationId) return true // no org context → allow (dev)
+  const race = await prisma.race.findFirst({
+    where: {
+      id: raceId,
+      election: { organizationId },
+    },
+    select: { id: true },
+  })
+  return !!race
+}
+
+/** Shared filter: results for this race, only if race is in org. */
+function orgRaceWhere(raceId: string, organizationId: string | null) {
+  return {
+    raceId,
+    status: 'SUBMITTED' as const,
+    ...(organizationId
+      ? { race: { election: { organizationId } } }
+      : {}),
+  }
 }
 
 app.get('/results/aggregate/national', async (request, reply) => {
@@ -1125,8 +1150,13 @@ app.get('/results/aggregate/national', async (request, reply) => {
     return reply.status(400).send({ error: 'raceId is required' })
   }
 
+  const organizationId = await resolveRacesOrgId(request)
+  if (!(await assertRaceInOrg(raceId, organizationId))) {
+    return reply.status(404).send({ error: 'Race not found for this organization' })
+  }
+
   const results = await prisma.stationResult.findMany({
-    where: { raceId, status: 'SUBMITTED' },
+    where: orgRaceWhere(raceId, organizationId),
     include: {
       votes: {
         include: {
@@ -1165,10 +1195,14 @@ app.get('/results/aggregate/county/:countyId', async (request, reply) => {
     return reply.status(400).send({ error: 'raceId is required' })
   }
 
+  const organizationId = await resolveRacesOrgId(request)
+  if (!(await assertRaceInOrg(raceId, organizationId))) {
+    return reply.status(404).send({ error: 'Race not found for this organization' })
+  }
+
   const results = await prisma.stationResult.findMany({
     where: {
-      raceId,
-      status: 'SUBMITTED',
+      ...orgRaceWhere(raceId, organizationId),
       pollingStation: {
         ward: {
           constituency: {
@@ -1225,10 +1259,14 @@ app.get(
       return reply.status(400).send({ error: 'raceId is required' })
     }
 
+    const organizationId = await resolveRacesOrgId(request)
+    if (!(await assertRaceInOrg(raceId, organizationId))) {
+      return reply.status(404).send({ error: 'Race not found for this organization' })
+    }
+
     const results = await prisma.stationResult.findMany({
       where: {
-        raceId,
-        status: 'SUBMITTED',
+        ...orgRaceWhere(raceId, organizationId),
         pollingStation: {
           ward: {
             constituencyId,
@@ -1275,10 +1313,14 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
     return reply.status(400).send({ error: 'raceId is required' })
   }
 
+  const organizationId = await resolveRacesOrgId(request)
+  if (!(await assertRaceInOrg(raceId, organizationId))) {
+    return reply.status(404).send({ error: 'Race not found for this organization' })
+  }
+
   const results = await prisma.stationResult.findMany({
     where: {
-      raceId,
-      status: 'SUBMITTED',
+      ...orgRaceWhere(raceId, organizationId),
       pollingStation: {
         wardId,
       },
@@ -1323,6 +1365,7 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
     },
   }
 })
+
 // ======================
 // ADMIN (platform SUPER_ADMIN)
 // ======================

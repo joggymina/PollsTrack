@@ -1640,6 +1640,65 @@ app.post(
   }
 )
 
+/** Agents this position admin has assigned (via assignedById) */
+app.get(
+  '/ops/agents',
+  { preHandler: [app.requirePositionAdmin] },
+  async (request) => {
+    const { id: adminId } = request.user as { id: string }
+
+    const assignments = await prisma.agentAssignment.findMany({
+      where: { assignedById: adminId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            role: true,
+            isActive: true,
+          },
+        },
+        pollingStation: {
+          select: { id: true, code: true, name: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    // Group by agent
+    const map = new Map<
+      string,
+      {
+        id: string
+        name: string
+        phone: string
+        role: string
+        isActive: boolean
+        stations: { id: string; code: string; name: string }[]
+      }
+    >()
+
+    for (const a of assignments) {
+      const existing = map.get(a.user.id)
+      if (existing) {
+        existing.stations.push(a.pollingStation)
+      } else {
+        map.set(a.user.id, {
+          id: a.user.id,
+          name: a.user.name,
+          phone: a.user.phone,
+          role: a.user.role,
+          isActive: a.user.isActive,
+          stations: [a.pollingStation],
+        })
+      }
+    }
+
+    return { data: Array.from(map.values()) }
+  }
+)
+
 // ======================
 // ROOT
 // ======================

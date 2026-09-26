@@ -452,3 +452,47 @@ export async function getOpsResultsSummary(token: string, scopeId: string) {
     { headers: { Authorization: `Bearer ${token}` } }
   )
 }
+
+export type OpsAgent = {
+  id: string
+  name: string
+  phone: string
+  role: string
+  isActive: boolean
+  stations: { id: string; code: string; name: string }[]
+}
+
+export async function getOpsAgents(token: string): Promise<OpsAgent[]> {
+  const data = await fetchJson<{ data: OpsAgent[] }>('/ops/agents', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  return data.data
+}
+
+export async function createOpsAgent(
+  token: string,
+  body: { phone: string; name: string }
+) {
+  return fetchJson<{ data: OpsAgent }>('/ops/agents', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function assignOpsStation(
+  token: string,
+  body: { userId: string; pollingStationId: string; scopeId: string }
+) {
+  return fetchJson('/ops/assignments', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  })
+}

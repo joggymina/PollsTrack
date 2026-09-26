@@ -1532,16 +1532,20 @@ app.post(
   '/ops/agents',
   { preHandler: [app.requirePositionAdmin] },
   async (request, reply) => {
+    const admin = request.user as { id: string }
     const body = request.body as { phone?: string; name?: string }
+
     if (!body.phone || !body.name) {
       return reply.status(400).send({ error: 'phone and name are required' })
     }
+
     const phone = body.phone.replace(/\D/g, '')
     if (!/^2547\d{8}$/.test(phone)) {
       return reply
         .status(400)
         .send({ error: 'Phone must be 2547XXXXXXXX (12 digits)' })
     }
+
     try {
       const user = await prisma.user.create({
         data: {
@@ -1549,6 +1553,7 @@ app.post(
           name: body.name.trim(),
           role: 'AGENT',
           isActive: true,
+          createdById: admin.id,
         },
         select: {
           id: true,
@@ -1647,55 +1652,42 @@ app.get(
   async (request) => {
     const { id: adminId } = request.user as { id: string }
 
-    const assignments = await prisma.agentAssignment.findMany({
-      where: { assignedById: adminId },
-      include: {
-        user: {
+    const myAgents = await prisma.user.findMany({
+      where: {
+        role: 'AGENT',
+        OR: [
+          { createdById: adminId },
+          { agentAssignments: { some: { assignedById: adminId } } },
+        ],
+      },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        role: true,
+        isActive: true,
+        agentAssignments: {
+          where: { assignedById: adminId },
           select: {
-            id: true,
-            name: true,
-            phone: true,
-            role: true,
-            isActive: true,
+            pollingStation: {
+              select: { id: true, code: true, name: true },
+            },
           },
         },
-        pollingStation: {
-          select: { id: true, code: true, name: true },
-        },
       },
-      orderBy: { createdAt: 'desc' },
     })
 
-    // Group by agent
-    const map = new Map<
-      string,
-      {
-        id: string
-        name: string
-        phone: string
-        role: string
-        isActive: boolean
-        stations: { id: string; code: string; name: string }[]
-      }
-    >()
-
-    for (const a of assignments) {
-      const existing = map.get(a.user.id)
-      if (existing) {
-        existing.stations.push(a.pollingStation)
-      } else {
-        map.set(a.user.id, {
-          id: a.user.id,
-          name: a.user.name,
-          phone: a.user.phone,
-          role: a.user.role,
-          isActive: a.user.isActive,
-          stations: [a.pollingStation],
-        })
-      }
+    return {
+      data: myAgents.map((a) => ({
+        id: a.id,
+        name: a.name,
+        phone: a.phone,
+        role: a.role,
+        isActive: a.isActive,
+        stations: a.agentAssignments.map((x) => x.pollingStation),
+      })),
     }
-
-    return { data: Array.from(map.values()) }
   }
 )
 
@@ -1748,6 +1740,7 @@ app.get('/', async () => {
       'GET  /ops/results/summary?scopeId=',
       'POST /ops/agents',
       'POST /ops/assignments',
+      'GET  /ops/agents',
     ],
   }
 })

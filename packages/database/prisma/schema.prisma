@@ -224,7 +224,8 @@ model StationResult {
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
-  @@unique([pollingStationId, raceId])
+  @@unique([pollingStationId, raceId, submittedById])
+  @@index([pollingStationId, raceId])
   @@index([pollingStationId])
   @@index([raceId])
   @@index([submittedById])

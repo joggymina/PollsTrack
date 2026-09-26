@@ -2,6 +2,7 @@
 
 import { useState, FormEvent, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { login } from '@/lib/api'
 import { setAuth, isLoggedIn, getUser } from '@/lib/auth'
 
@@ -30,7 +31,6 @@ export default function LoginPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
-
     try {
       const digits = phone.replace(/\D/g, '')
       const result = await login(digits)
@@ -103,10 +103,12 @@ export default function LoginPage() {
                 : 'Sign In'}
           </button>
 
-          <Link href="/register" className="text-blue-600 font-medium">
-  Create organization
-</Link>
-
+          <p className="text-center text-sm text-gray-500">
+            New team?{' '}
+            <Link href="/register" className="text-blue-600 font-medium">
+              Create organization
+            </Link>
+          </p>
         </form>
 
         <p className="text-center text-sm text-gray-400 mt-6">

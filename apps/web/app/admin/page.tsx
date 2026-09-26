@@ -37,7 +37,9 @@ export default function AdminHomePage() {
       <div className="flex items-start justify-between mb-8">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Admin</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Manage agents & stations</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Manage agents & stations
+          </p>
         </div>
         <button
           type="button"
@@ -63,11 +65,23 @@ export default function AdminHomePage() {
         </Link>
 
         <Link
+          href="/admin/position-admins"
+          className="block bg-white rounded-2xl border border-gray-100 p-5 hover:border-blue-300 shadow-sm"
+        >
+          <p className="font-semibold text-gray-900">Position admins</p>
+          <p className="text-sm text-gray-500 mt-1">
+            MCA / ward / county ops — position → level → place
+          </p>
+        </Link>
+
+        <Link
           href="/agent"
           className="block bg-white rounded-2xl border border-gray-100 p-5 hover:border-blue-300 shadow-sm"
         >
           <p className="font-semibold text-gray-900">Agent portal</p>
-          <p className="text-sm text-gray-500 mt-1">Submit results as an agent</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Submit results as an agent
+          </p>
         </Link>
 
         <Link

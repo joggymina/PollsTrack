@@ -134,6 +134,24 @@ export type StationResultDetail = {
   }
 }
 
+export type PositionAdminScope = {
+  id: string
+  level: string
+  race: { id: string; position: string; scope: string }
+  county: { id: string; name: string; code: string } | null
+  constituency: { id: string; name: string; code: string } | null
+  ward: { id: string; name: string; code: string } | null
+}
+
+export type PositionAdminUser = {
+  id: string
+  name: string
+  phone: string
+  role: string
+  isActive?: boolean
+  positionAdminScopes: PositionAdminScope[]
+}
+
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     cache: 'no-store',
@@ -239,12 +257,7 @@ export async function getRaces(): Promise<Race[]> {
     const data = await fetchJson<{ data: Race[] }>('/races')
     return data.data
   } catch {
-    return [
-      {
-        id: 'cmu5rxtlu0001v8vj5p0cfcix',
-        position: 'Member of County Assembly',
-      },
-    ]
+    return []
   }
 }
 
@@ -262,9 +275,7 @@ export async function getResults(): Promise<StationResultSummary[]> {
 
 // ---------- Auth + Agent helpers ----------
 
-export async function login(
-  phone: string
-): Promise<{
+export async function login(phone: string): Promise<{
   token: string
   user: { id: string; name: string; phone: string; role: string }
 }> {
@@ -392,4 +403,52 @@ export async function unassignStation(
     },
     body: JSON.stringify(body),
   })
+}
+
+// ---------- Position admin (ops) ----------
+
+export async function createPositionAdmin(
+  token: string,
+  body: {
+    phone: string
+    name: string
+    raceId: string
+    level: string
+    countyId?: string | null
+    constituencyId?: string | null
+    wardId?: string | null
+  }
+) {
+  return fetchJson<{ data: PositionAdminUser }>('/admin/position-admins', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getPositionAdmins(
+  token: string
+): Promise<PositionAdminUser[]> {
+  const data = await fetchJson<{ data: PositionAdminUser[] }>(
+    '/admin/position-admins',
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  return data.data
+}
+
+export async function getOpsMe(token: string): Promise<PositionAdminUser> {
+  const data = await fetchJson<{ data: PositionAdminUser }>('/ops/me', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  return data.data
+}
+
+export async function getOpsResultsSummary(token: string, scopeId: string) {
+  return fetchJson<{ data: unknown }>(
+    `/ops/results/summary?scopeId=${encodeURIComponent(scopeId)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
 }

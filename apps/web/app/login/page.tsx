@@ -5,6 +5,15 @@ import { useRouter } from 'next/navigation'
 import { login } from '@/lib/api'
 import { setAuth, isLoggedIn, getUser } from '@/lib/auth'
 
+function redirectByRole(
+  role: string,
+  router: ReturnType<typeof useRouter>
+) {
+  if (role === 'SUPER_ADMIN') router.replace('/admin')
+  else if (role === 'POSITION_ADMIN') router.replace('/ops')
+  else router.replace('/agent')
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const [phone, setPhone] = useState('')
@@ -13,13 +22,8 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!isLoggedIn()) return
-
     const user = getUser()
-    if (user?.role === 'SUPER_ADMIN') {
-      router.replace('/admin')
-    } else {
-      router.replace('/agent')
-    }
+    if (user?.role) redirectByRole(user.role, router)
   }, [router])
 
   async function handleSubmit(e: FormEvent) {
@@ -31,12 +35,7 @@ export default function LoginPage() {
       const digits = phone.replace(/\D/g, '')
       const result = await login(digits)
       setAuth(result.token, result.user)
-
-      if (result.user.role === 'SUPER_ADMIN') {
-        router.replace('/admin')
-      } else {
-        router.replace('/agent')
-      }
+      redirectByRole(result.user.role, router)
     } catch (err: any) {
       setError(err.message || 'Login failed')
     } finally {

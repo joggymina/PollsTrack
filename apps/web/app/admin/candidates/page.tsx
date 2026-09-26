@@ -87,32 +87,38 @@ export default function AdminCandidatesPage() {
 
   if (loading) {
     return (
-      <div className="p-8 text-center text-gray-500">Loading races…</div>
+      <div className="p-8 text-center text-gray-400">Loading races…</div>
     )
   }
 
+  const inputClass =
+    'w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500'
+
   return (
-    <div className="max-w-2xl mx-auto p-6">
+    <div className="max-w-2xl mx-auto p-6 text-gray-900">
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
-          <Link href="/admin" className="text-sm text-blue-600 hover:underline">
+          <Link
+            href="/admin"
+            className="text-sm text-blue-400 hover:underline"
+          >
             ← Admin
           </Link>
-          <h1 className="text-2xl font-bold text-gray-900 mt-1">Candidates</h1>
-          <p className="text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-white mt-1">Candidates</h1>
+          <p className="text-sm text-gray-400">
             Add candidates for each race in your organization
           </p>
         </div>
       </div>
 
       <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium text-gray-300 mb-1">
           Race / position
         </label>
         <select
           value={raceId}
           onChange={(e) => setRaceId(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          className={inputClass}
         >
           {races.map((r) => (
             <option key={r.id} value={r.id}>
@@ -124,7 +130,7 @@ export default function AdminCandidatesPage() {
 
       <form
         onSubmit={onSubmit}
-        className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-8 space-y-3"
+        className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-8 space-y-3"
       >
         <h2 className="font-semibold text-gray-900">Add candidate</h2>
         <input
@@ -133,7 +139,7 @@ export default function AdminCandidatesPage() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
-          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          className={inputClass}
         />
         <div className="grid grid-cols-2 gap-3">
           <input
@@ -141,14 +147,14 @@ export default function AdminCandidatesPage() {
             placeholder="Code (e.g. C001)"
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            className={inputClass}
           />
           <input
             type="text"
             placeholder="Party"
             value={party}
             onChange={(e) => setParty(e.target.value)}
-            className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            className={inputClass}
           />
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
@@ -162,7 +168,7 @@ export default function AdminCandidatesPage() {
         </button>
       </form>
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100">
           <h2 className="font-semibold text-gray-900">
             Current candidates ({candidates.length})
@@ -173,7 +179,7 @@ export default function AdminCandidatesPage() {
             No candidates for this race yet.
           </p>
         ) : (
-          <ul className="divide-y divide-gray-50">
+          <ul className="divide-y divide-gray-100">
             {candidates.map((c) => (
               <li
                 key={c.id}

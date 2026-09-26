@@ -224,6 +224,8 @@ model Race {
   positionAdminScopes PositionAdminScope[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
+
+  @@index([electionId])
 }
 
 model Candidate {
@@ -238,6 +240,8 @@ model Candidate {
   votes     ResultVote[]
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
+
+  @@index([raceId])
 }
 
 // ======================
@@ -266,6 +270,7 @@ model StationResult {
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
+  // One result per agent per station per race (multi-party monitoring)
   @@unique([pollingStationId, raceId, submittedById])
   @@index([pollingStationId, raceId])
   @@index([pollingStationId])

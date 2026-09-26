@@ -362,8 +362,53 @@ app.get(
 // RACES & CANDIDATES
 // ======================
 
-app.get('/races', async () => {
+/**
+ * Resolve which organization to list races for.
+ * Priority:
+ *  1. Authenticated user's organizationId (JWT / DB)
+ *  2. ?org=slug query (public dashboard for a specific org)
+ *  3. First/default organization (legacy public dashboard)
+ */
+async function resolveRacesOrgId(
+  request: { user?: unknown; query?: unknown }
+): Promise<string | null> {
+  // 1) Logged-in caller
+  try {
+    if (request.user) {
+      const orgId = await getCallerOrgId(request as { user: unknown })
+      if (orgId) return orgId
+    }
+  } catch {
+    // not authenticated — continue
+  }
+
+  const query = (request.query || {}) as { org?: string }
+
+  // 2) Explicit public slug
+  if (query.org && typeof query.org === 'string') {
+    const org = await prisma.organization.findFirst({
+      where: { slug: query.org.trim(), isActive: true },
+      select: { id: true },
+    })
+    if (org) return org.id
+  }
+
+  // 3) Default org (oldest active) so public dashboard still works
+  const fallback = await prisma.organization.findFirst({
+    where: { isActive: true },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  })
+  return fallback?.id ?? null
+}
+
+app.get('/races', async (request) => {
+  const organizationId = await resolveRacesOrgId(request)
+
   const races = await prisma.race.findMany({
+    where: organizationId
+      ? { election: { organizationId } }
+      : undefined, // no org in DB yet → return all (dev fallback)
     orderBy: { createdAt: 'asc' },
     select: {
       id: true,
@@ -371,6 +416,7 @@ app.get('/races', async () => {
       scope: true,
     },
   })
+
   return { data: races }
 })
 

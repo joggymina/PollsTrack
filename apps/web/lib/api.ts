@@ -71,6 +71,7 @@ export type StationResultSummary = {
   pollingStationId: string
   raceId: string
   status: string
+  submittedById: string
 }
 
 export type AdminAgent = {

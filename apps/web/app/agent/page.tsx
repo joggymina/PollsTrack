@@ -43,6 +43,23 @@ export default function AgentHomePage() {
     setPendingCount(user ? getPendingCount(user.id) : 0)
   }
 
+  function loadMySubmittedStations() {
+    const userId = getUser()?.id
+    if (!userId) return
+
+    getResults()
+      .then((results) => {
+        // Only stations THIS agent has already submitted
+        const mine = results.filter((r) => r.submittedById === userId)
+        setSubmittedStationIds(
+          new Set(mine.map((r) => r.pollingStationId))
+        )
+      })
+      .catch(() => {
+        // Ignore — page still usable without flags
+      })
+  }
+
   useEffect(() => {
     if (!isLoggedIn()) {
       router.replace('/login')
@@ -58,18 +75,16 @@ export default function AgentHomePage() {
 
     let cancelled = false
 
-    // 1) Try network first
     getMe(token)
       .then((meData) => {
         if (cancelled) return
         setMe(meData)
-        setCachedMe(meData) // cache for offline use
+        setCachedMe(meData)
         setIsOfflineCache(false)
         setLoading(false)
         setError('')
         refreshPendingCount()
 
-        // Auto-sync offline queue (non-blocking)
         if (
           typeof navigator !== 'undefined' &&
           navigator.onLine &&
@@ -87,7 +102,6 @@ export default function AgentHomePage() {
       })
       .catch((err) => {
         if (cancelled) return
-
         const msg = err?.message || 'Failed to load'
         const isNetworkError =
           msg.includes('Failed to fetch') ||
@@ -95,7 +109,6 @@ export default function AgentHomePage() {
           msg.includes('Network request failed') ||
           (typeof navigator !== 'undefined' && !navigator.onLine)
 
-        // 2) Fallback to cache when offline / network error
         if (isNetworkError) {
           const cached = getCachedMe()
           if (cached) {
@@ -108,7 +121,6 @@ export default function AgentHomePage() {
           }
         }
 
-        // Auth errors → force re-login
         if (msg.includes('Unauthorized') || msg.includes('401')) {
           clearAuth()
           localStorage.removeItem(ME_CACHE_KEY)
@@ -120,15 +132,8 @@ export default function AgentHomePage() {
         setLoading(false)
       })
 
-    // Background: which stations already submitted (ignore failures)
-    getResults()
-      .then((results) => {
-        if (cancelled) return
-        setSubmittedStationIds(
-          new Set(results.map((r) => r.pollingStationId))
-        )
-      })
-      .catch(() => {})
+    // Background: my submissions only
+    loadMySubmittedStations()
 
     return () => {
       cancelled = true
@@ -140,7 +145,6 @@ export default function AgentHomePage() {
       refreshPendingCount()
       setIsOfflineCache(false)
 
-      // Re-fetch fresh data when back online
       const token = getToken()
       if (token) {
         getMe(token)
@@ -149,6 +153,7 @@ export default function AgentHomePage() {
             setCachedMe(meData)
           })
           .catch(() => {})
+        loadMySubmittedStations()
       }
 
       const user = getUser()
@@ -234,7 +239,6 @@ export default function AgentHomePage() {
         </button>
       </div>
 
-      {/* Offline cache indicator */}
       {isOfflineCache && (
         <div className="mb-4 bg-gray-100 border border-gray-200 rounded-xl px-4 py-2 text-sm text-gray-600">
           Showing cached stations · you are offline

@@ -20,7 +20,6 @@ export default function AdminHomePage() {
       router.replace('/agent')
       return
     }
-
     const token = getToken()!
     getAdminAgents(token)
       .then((list) => setAgentCount(list.length))
@@ -38,7 +37,7 @@ export default function AdminHomePage() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">Admin</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Manage agents & stations
+            Manage agents, candidates & stations
           </p>
         </div>
         <button
@@ -61,6 +60,16 @@ export default function AdminHomePage() {
           <p className="font-semibold text-gray-900">Agents</p>
           <p className="text-sm text-gray-500 mt-1">
             {agentCount} registered · Create, assign & unassign
+          </p>
+        </Link>
+
+        <Link
+          href="/admin/candidates"
+          className="block bg-white rounded-2xl border border-gray-100 p-5 hover:border-blue-300 shadow-sm"
+        >
+          <p className="font-semibold text-gray-900">Candidates</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Add candidates per race (President, Governor, MCA…)
           </p>
         </Link>
 

@@ -563,3 +563,31 @@ export async function assignOpsStation(
     body: JSON.stringify(body),
   })
 }
+
+export async function createCandidate(
+  token: string,
+  body: {
+    raceId: string
+    name: string
+    code?: string
+    party?: string
+  }
+) {
+  return fetchJson<{
+    data: {
+      id: string
+      name: string
+      code: string | null
+      party: string | null
+      raceId: string
+      isActive: boolean
+    }
+  }>('/admin/candidates', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  })
+}

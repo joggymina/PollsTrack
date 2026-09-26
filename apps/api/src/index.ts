@@ -1365,7 +1365,127 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
     },
   }
 })
+// ======================
+// ADMIN: CANDIDATES
+// ======================
 
+app.post(
+  '/admin/candidates',
+  { preHandler: [app.requireSuperAdmin] },
+  async (request, reply) => {
+    const body = request.body as {
+      raceId?: string
+      name?: string
+      code?: string | null
+      party?: string | null
+    }
+
+    if (!body.raceId || !body.name?.trim()) {
+      return reply.status(400).send({ error: 'raceId and name are required' })
+    }
+
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
+    // Race must belong to this org
+    const race = await prisma.race.findFirst({
+      where: {
+        id: body.raceId,
+        election: { organizationId: orgId },
+      },
+      select: { id: true, position: true },
+    })
+    if (!race) {
+      return reply.status(404).send({
+        error: 'Race not found in your organization',
+      })
+    }
+
+    try {
+      const candidate = await prisma.candidate.create({
+        data: {
+          raceId: body.raceId,
+          name: body.name.trim(),
+          code: body.code?.trim() || null,
+          party: body.party?.trim() || null,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          party: true,
+          raceId: true,
+          isActive: true,
+        },
+      })
+      return reply.status(201).send({ data: candidate })
+    } catch (error: any) {
+      if (error.code === 'P2003') {
+        return reply.status(400).send({ error: 'Invalid raceId' })
+      }
+      throw error
+    }
+  }
+)
+
+app.patch(
+  '/admin/candidates/:id',
+  { preHandler: [app.requireSuperAdmin] },
+  async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const body = request.body as {
+      name?: string
+      code?: string | null
+      party?: string | null
+      isActive?: boolean
+    }
+
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
+    const existing = await prisma.candidate.findFirst({
+      where: {
+        id,
+        race: { election: { organizationId: orgId } },
+      },
+      select: { id: true },
+    })
+    if (!existing) {
+      return reply.status(404).send({ error: 'Candidate not found' })
+    }
+
+    const candidate = await prisma.candidate.update({
+      where: { id },
+      data: {
+        ...(body.name !== undefined ? { name: body.name.trim() } : {}),
+        ...(body.code !== undefined ? { code: body.code?.trim() || null } : {}),
+        ...(body.party !== undefined
+          ? { party: body.party?.trim() || null }
+          : {}),
+        ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        party: true,
+        raceId: true,
+        isActive: true,
+      },
+    })
+
+    return { data: candidate }
+  }
+)
 // ======================
 // ADMIN (platform SUPER_ADMIN)
 // ======================
@@ -2084,6 +2204,8 @@ app.get('/', async () => {
       'GET  /ops/agents',
       'POST /organizations',
       'GET  /organizations/me',
+      'POST /admin/candidates',
+      'PATCH /admin/candidates/:id',
     ],
   }
 })

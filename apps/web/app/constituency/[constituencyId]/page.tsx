@@ -6,6 +6,7 @@ import {
   getWards,
   getCounties,
   getRaces,
+  type OrgAccessParams,
 } from '@/lib/api'
 import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
 import { StatsCards } from '@/components/StatsCards'
@@ -17,28 +18,37 @@ export const dynamic = 'force-dynamic'
 
 type Props = {
   params: Promise<{ constituencyId: string }>
-  searchParams: Promise<{ raceId?: string }>
+  searchParams: Promise<{ raceId?: string; org?: string; k?: string }>
 }
 
 export default async function ConstituencyPage({ params, searchParams }: Props) {
   const { constituencyId } = await params
-  const { raceId: raceIdParam } = await searchParams
+  const sp = await searchParams
+  const access: OrgAccessParams = {
+    org: sp.org ?? null,
+    k: sp.k ?? null,
+  }
 
-  const allRaces = await getRaces()
+  const allRaces = await getRaces(access)
   // Constituency → President + Governor + Senator + Woman Rep + MP
   const races = filterRacesForLevel(allRaces, 'constituency')
-  const raceId = pickDefaultRaceId(allRaces, 'constituency', raceIdParam)
+  const raceId = pickDefaultRaceId(allRaces, 'constituency', sp.raceId)
 
   if (!raceId) {
     return (
-      <div className="text-center py-20 text-gray-500">
-        No race selected
+      <div className="text-center py-20 text-gray-500 space-y-2">
+        <p>No race selected</p>
+        {!access.org && (
+          <p className="text-sm">
+            Open this page with an organization share link.
+          </p>
+        )}
       </div>
     )
   }
 
   const [aggregate, allConstituencies, wards, counties] = await Promise.all([
-    getConstituencyAggregate(constituencyId, raceId),
+    getConstituencyAggregate(constituencyId, raceId, access),
     getConstituencies(),
     getWards(constituencyId),
     getCounties(),
@@ -47,18 +57,26 @@ export default async function ConstituencyPage({ params, searchParams }: Props) 
   const constituency = allConstituencies.find((c) => c.id === constituencyId)
   const county = counties.find((c) => c.id === constituency?.countyId)
 
+  const orgQs = new URLSearchParams()
+  if (access.org) orgQs.set('org', access.org)
+  if (access.k) orgQs.set('k', access.k)
+  const orgSuffix = orgQs.toString() ? `&${orgQs.toString()}` : ''
+
   return (
     <div>
       <div className="mb-6">
         <div className="flex flex-wrap items-center gap-2 text-sm text-blue-600 mb-2">
-          <Link href={`/?raceId=${raceId}`} className="hover:underline">
+          <Link
+            href={`/?raceId=${raceId}${orgSuffix}`}
+            className="hover:underline"
+          >
             National
           </Link>
           <span className="text-gray-400">→</span>
           {county && (
             <>
               <Link
-                href={`/county/${county.id}?raceId=${raceId}`}
+                href={`/county/${county.id}?raceId=${raceId}${orgSuffix}`}
                 className="hover:underline"
               >
                 {county.name}
@@ -104,7 +122,7 @@ export default async function ConstituencyPage({ params, searchParams }: Props) 
               wards.map((ward) => (
                 <Link
                   key={ward.id}
-                  href={`/ward/${ward.id}?raceId=${raceId}`}
+                  href={`/ward/${ward.id}?raceId=${raceId}${orgSuffix}`}
                   className="block px-6 py-3 hover:bg-blue-50 transition-colors"
                 >
                   <div className="flex justify-between items-center">

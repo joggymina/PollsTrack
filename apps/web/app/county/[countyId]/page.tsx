@@ -5,6 +5,7 @@ import {
   getCounties,
   getConstituencies,
   getRaces,
+  type OrgAccessParams,
 } from '@/lib/api'
 import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
 import { StatsCards } from '@/components/StatsCards'
@@ -16,45 +17,61 @@ export const dynamic = 'force-dynamic'
 
 type Props = {
   params: Promise<{ countyId: string }>
-  searchParams: Promise<{ raceId?: string }>
+  searchParams: Promise<{ raceId?: string; org?: string; k?: string }>
 }
 
 export default async function CountyPage({ params, searchParams }: Props) {
   const { countyId } = await params
-  const { raceId: raceIdParam } = await searchParams
+  const sp = await searchParams
+  const access: OrgAccessParams = {
+    org: sp.org ?? null,
+    k: sp.k ?? null,
+  }
 
-  const allRaces = await getRaces()
+  const allRaces = await getRaces(access)
   // County level → President + Governor + Senator + Woman Rep
   const races = filterRacesForLevel(allRaces, 'county')
-  const raceId = pickDefaultRaceId(allRaces, 'county', raceIdParam)
+  const raceId = pickDefaultRaceId(allRaces, 'county', sp.raceId)
 
   if (!raceId) {
     return (
-      <div className="text-center py-20 text-gray-500">
-        No race selected
+      <div className="text-center py-20 text-gray-500 space-y-2">
+        <p>No race selected</p>
+        {!access.org && (
+          <p className="text-sm">
+            Open this page with an organization share link.
+          </p>
+        )}
       </div>
     )
   }
 
   const [aggregate, counties, constituencies] = await Promise.all([
-    getCountyAggregate(countyId, raceId),
+    getCountyAggregate(countyId, raceId, access),
     getCounties(),
     getConstituencies(countyId),
   ])
 
   const county = counties.find((c) => c.id === countyId)
 
+  const orgQs = new URLSearchParams()
+  if (access.org) orgQs.set('org', access.org)
+  if (access.k) orgQs.set('k', access.k)
+  const orgSuffix = orgQs.toString() ? `&${orgQs.toString()}` : ''
+
   return (
     <div>
       <div className="mb-6">
         <div className="flex flex-wrap items-center gap-2 text-sm text-blue-600 mb-2">
-          <Link href={`/?raceId=${raceId}`} className="hover:underline">
+          <Link
+            href={`/?raceId=${raceId}${orgSuffix}`}
+            className="hover:underline"
+          >
             National
           </Link>
           <span className="text-gray-400">→</span>
           <span className="text-gray-600">{county?.name || 'County'}</span>
         </div>
-
         <h2 className="text-2xl font-bold text-gray-900">
           {county?.name || 'County'} Results
         </h2>
@@ -73,7 +90,6 @@ export default async function CountyPage({ params, searchParams }: Props) {
         <div className="lg:col-span-2">
           <CandidateRanking candidates={aggregate.candidates} />
         </div>
-
         <div className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100">
             <h2 className="text-lg font-semibold text-gray-900">
@@ -90,7 +106,7 @@ export default async function CountyPage({ params, searchParams }: Props) {
               constituencies.map((constituency) => (
                 <Link
                   key={constituency.id}
-                  href={`/constituency/${constituency.id}?raceId=${raceId}`}
+                  href={`/constituency/${constituency.id}?raceId=${raceId}${orgSuffix}`}
                   className="block px-6 py-3 hover:bg-blue-50 transition-colors"
                 >
                   <div className="flex justify-between items-center">

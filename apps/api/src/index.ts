@@ -1067,11 +1067,20 @@ app.get('/results', async (request) => {
     status?: string
   }
 
+  const organizationId = await resolveRacesOrgId(request)
+
   const results = await prisma.stationResult.findMany({
     where: {
       ...(raceId ? { raceId } : {}),
       ...(pollingStationId ? { pollingStationId } : {}),
       ...(status ? { status } : {}),
+      // Org isolation: only results for this org's races + submitters
+      ...(organizationId
+        ? {
+            race: { election: { organizationId } },
+            submittedBy: { organizationId },
+          }
+        : {}),
     },
     orderBy: { serverReceivedAt: 'desc' },
     include: {
@@ -1099,9 +1108,18 @@ app.get('/results', async (request) => {
 
 app.get('/results/:id', async (request, reply) => {
   const { id } = request.params as { id: string }
+  const organizationId = await resolveRacesOrgId(request)
 
-  const result = await prisma.stationResult.findUnique({
-    where: { id },
+  const result = await prisma.stationResult.findFirst({
+    where: {
+      id,
+      ...(organizationId
+        ? {
+            race: { election: { organizationId } },
+            submittedBy: { organizationId },
+          }
+        : {}),
+    },
     include: {
       votes: {
         include: {
@@ -1209,13 +1227,17 @@ async function assertRaceInOrg(
   return !!race
 }
 
-/** Shared filter: results for this race, only if race is in org. */
+/** Shared filter: results for this race, scoped to organization. */
 function orgRaceWhere(raceId: string, organizationId: string | null) {
   return {
     raceId,
     status: 'SUBMITTED' as const,
     ...(organizationId
-      ? { race: { election: { organizationId } } }
+      ? {
+          race: { election: { organizationId } },
+          // Multi-agent unique: only count this org's submitters
+          submittedBy: { organizationId },
+        }
       : {}),
   }
 }
@@ -1442,7 +1464,6 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
   }
 })
 
-
 // ======================
 // ADMIN: CANDIDATES
 // ======================
@@ -1469,7 +1490,6 @@ app.post(
         .send({ error: 'No organization linked to your account' })
     }
 
-    // Any position is allowed — org chooses which races to monitor
     const race = await prisma.race.findFirst({
       where: {
         id: body.raceId,
@@ -1484,7 +1504,6 @@ app.post(
     }
 
     const code = body.code?.trim() || null
-
     if (code) {
       const duplicate = await prisma.candidate.findFirst({
         where: { raceId: body.raceId, code },
@@ -1614,14 +1633,12 @@ app.patch(
 )
 
 // ======================
-// ADMIN (platform SUPER_ADMIN)
+// ADMIN (org SUPER_ADMIN)
 // ======================
 
 app.get(
   '/admin/agents',
-  {
-    preHandler: [app.requireSuperAdmin],
-  },
+  { preHandler: [app.requireSuperAdmin] },
   async (request, reply) => {
     const orgId = await getCallerOrgId(request)
     if (!orgId) {
@@ -1669,9 +1686,7 @@ app.get(
 
 app.post(
   '/admin/agents',
-  {
-    preHandler: [app.requireSuperAdmin],
-  },
+  { preHandler: [app.requireSuperAdmin] },
   async (request, reply) => {
     const body = request.body as {
       phone?: string
@@ -1723,9 +1738,7 @@ app.post(
 
 app.post(
   '/admin/assignments',
-  {
-    preHandler: [app.requireSuperAdmin],
-  },
+  { preHandler: [app.requireSuperAdmin] },
   async (request, reply) => {
     const body = request.body as {
       userId?: string
@@ -1852,6 +1865,7 @@ app.delete(
     return { data: { ok: true } }
   }
 )
+
 // ======================
 // POSITION ADMIN (OPS)
 // ======================
@@ -1925,8 +1939,26 @@ app.post(
         .send({ error: 'Phone must be 2547XXXXXXXX (12 digits)' })
     }
 
-    const race = await prisma.race.findUnique({ where: { id: body.raceId } })
-    if (!race) return reply.status(400).send({ error: 'Invalid raceId' })
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
+    // Race must belong to caller's organization
+    const race = await prisma.race.findFirst({
+      where: {
+        id: body.raceId,
+        election: { organizationId: orgId },
+      },
+      select: { id: true },
+    })
+    if (!race) {
+      return reply.status(400).send({
+        error: 'Invalid raceId or race not in your organization',
+      })
+    }
 
     try {
       const user = await prisma.user.create({
@@ -1935,6 +1967,7 @@ app.post(
           name: body.name.trim(),
           role: 'POSITION_ADMIN',
           isActive: true,
+          organizationId: orgId,
           positionAdminScopes: {
             create: {
               raceId: body.raceId,
@@ -1954,6 +1987,7 @@ app.post(
           name: true,
           phone: true,
           role: true,
+          organizationId: true,
           positionAdminScopes: {
             include: {
               race: { select: { id: true, position: true, scope: true } },
@@ -1979,9 +2013,19 @@ app.post(
 app.get(
   '/admin/position-admins',
   { preHandler: [app.requireSuperAdmin] },
-  async () => {
+  async (request, reply) => {
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
     const users = await prisma.user.findMany({
-      where: { role: 'POSITION_ADMIN' },
+      where: {
+        role: 'POSITION_ADMIN',
+        organizationId: orgId,
+      },
       orderBy: { name: 'asc' },
       select: {
         id: true,
@@ -1989,6 +2033,7 @@ app.get(
         phone: true,
         role: true,
         isActive: true,
+        organizationId: true,
         positionAdminScopes: {
           include: {
             race: { select: { id: true, position: true, scope: true } },
@@ -2017,6 +2062,7 @@ app.get(
         phone: true,
         role: true,
         isActive: true,
+        organizationId: true,
         positionAdminScopes: {
           include: {
             race: { select: { id: true, position: true, scope: true } },
@@ -2056,7 +2102,6 @@ app.get(
           ? { id: scopeId }
           : { id: scopeId, userId: adminId },
     })
-
     if (!scope) {
       return reply.status(404).send({ error: 'Scope not found' })
     }
@@ -2141,6 +2186,10 @@ app.post(
         .send({ error: 'Phone must be 2547XXXXXXXX (12 digits)' })
     }
 
+    const orgId = await getCallerOrgId(request)
+    // Position admins should belong to an org; still allow create if missing
+    // but prefer linking when available
+
     try {
       const user = await prisma.user.create({
         data: {
@@ -2149,6 +2198,7 @@ app.post(
           role: 'AGENT',
           isActive: true,
           createdById: admin.id,
+          organizationId: orgId,
         },
         select: {
           id: true,
@@ -2156,6 +2206,7 @@ app.post(
           phone: true,
           role: true,
           isActive: true,
+          organizationId: true,
         },
       })
       return reply.status(201).send({ data: user })
@@ -2208,11 +2259,21 @@ app.post(
       })
     }
 
+    const orgId = await getCallerOrgId(request)
+
     const agent = await prisma.user.findFirst({
-      where: { id: body.userId, role: 'AGENT', isActive: true },
+      where: {
+        id: body.userId,
+        role: 'AGENT',
+        isActive: true,
+        ...(orgId ? { organizationId: orgId } : {}),
+      },
+      select: { id: true },
     })
     if (!agent) {
-      return reply.status(400).send({ error: 'Invalid agent userId' })
+      return reply.status(400).send({
+        error: 'Invalid agent userId or agent not in your organization',
+      })
     }
 
     try {
@@ -2246,10 +2307,12 @@ app.get(
   { preHandler: [app.requirePositionAdmin] },
   async (request) => {
     const { id: adminId } = request.user as { id: string }
+    const orgId = await getCallerOrgId(request)
 
     const myAgents = await prisma.user.findMany({
       where: {
         role: 'AGENT',
+        ...(orgId ? { organizationId: orgId } : {}),
         OR: [
           { createdById: adminId },
           { agentAssignments: { some: { assignedById: adminId } } },
@@ -2262,6 +2325,7 @@ app.get(
         phone: true,
         role: true,
         isActive: true,
+        organizationId: true,
         agentAssignments: {
           where: { assignedById: adminId },
           select: {

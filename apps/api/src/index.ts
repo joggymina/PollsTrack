@@ -3,6 +3,11 @@ import cors from '@fastify/cors'
 import dotenv from 'dotenv'
 import { prisma } from '@polling/database'
 import authPlugin from './plugins/auth.js'
+import crypto from 'crypto'
+
+function newShareToken() {
+  return crypto.randomBytes(24).toString('hex')
+}
 
 dotenv.config()
 
@@ -173,9 +178,11 @@ app.post('/auth/login', async (request, reply) => {
     },
   }
 })
+
 // ======================
 // ORGANIZATIONS
 // ======================
+
 function slugify(name: string) {
   return name
     .toLowerCase()
@@ -255,6 +262,8 @@ app.post('/organizations', async (request, reply) => {
           countyId,
           constituencyId,
           wardId,
+          publicViewEnabled: false,
+          publicShareToken: newShareToken(),
         },
       })
 
@@ -306,6 +315,24 @@ app.post('/organizations', async (request, reply) => {
   }
 })
 
+/** Listed orgs only (public homepage). */
+app.get('/organizations/public', async () => {
+  const orgs = await prisma.organization.findMany({
+    where: {
+      isActive: true,
+      publicViewEnabled: true,
+    },
+    orderBy: { name: 'asc' },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      primaryLevel: true,
+    },
+  })
+  return { data: orgs }
+})
+
 app.get(
   '/organizations/me',
   { preHandler: [app.authenticate] },
@@ -324,6 +351,7 @@ app.get(
             countyId: true,
             constituencyId: true,
             wardId: true,
+            publicViewEnabled: true,
             county: { select: { id: true, name: true, code: true } },
             constituency: { select: { id: true, name: true, code: true } },
             ward: { select: { id: true, name: true, code: true } },
@@ -337,6 +365,106 @@ app.get(
     }
 
     return { data: user.organization }
+  }
+)
+
+app.get(
+  '/organizations/me/public-settings',
+  { preHandler: [app.requireSuperAdmin] },
+  async (request, reply) => {
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        publicViewEnabled: true,
+        publicShareToken: true,
+      },
+    })
+    if (!org) {
+      return reply.status(404).send({ error: 'Organization not found' })
+    }
+
+    return {
+      data: {
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        publicViewEnabled: org.publicViewEnabled,
+        publicShareToken: org.publicShareToken,
+        hasShareToken: !!org.publicShareToken,
+      },
+    }
+  }
+)
+
+app.patch(
+  '/organizations/me/public-settings',
+  { preHandler: [app.requireSuperAdmin] },
+  async (request, reply) => {
+    const orgId = await getCallerOrgId(request)
+    if (!orgId) {
+      return reply
+        .status(403)
+        .send({ error: 'No organization linked to your account' })
+    }
+
+    const body = request.body as {
+      publicViewEnabled?: boolean
+      rotateShareToken?: boolean
+    }
+
+    const data: {
+      publicViewEnabled?: boolean
+      publicShareToken?: string
+    } = {}
+
+    if (typeof body.publicViewEnabled === 'boolean') {
+      data.publicViewEnabled = body.publicViewEnabled
+    }
+
+    if (body.rotateShareToken === true) {
+      data.publicShareToken = newShareToken()
+    }
+
+    // Ensure a token exists when enabling public view for the first time
+    if (body.publicViewEnabled === true || body.rotateShareToken === true) {
+      const current = await prisma.organization.findUnique({
+        where: { id: orgId },
+        select: { publicShareToken: true },
+      })
+      if (!current?.publicShareToken && !data.publicShareToken) {
+        data.publicShareToken = newShareToken()
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      return reply.status(400).send({
+        error: 'Provide publicViewEnabled and/or rotateShareToken',
+      })
+    }
+
+    const org = await prisma.organization.update({
+      where: { id: orgId },
+      data,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        publicViewEnabled: true,
+        publicShareToken: true,
+      },
+    })
+
+    return { data: org }
   }
 )
 
@@ -416,53 +544,64 @@ app.get(
 // RACES & CANDIDATES
 // ======================
 
+type PublicAccessQuery = {
+  org?: string
+  k?: string
+}
+
 /**
- * Resolve which organization to list races for.
- * Priority:
- *  1. Authenticated user's organizationId (JWT / DB)
- *  2. ?org=slug query (public dashboard for a specific org)
- *  3. First/default organization (legacy public dashboard)
+ * Resolve organization for races / aggregates / public results.
+ * 1. Authenticated user's organizationId
+ * 2. Public: ?org=slug only if publicViewEnabled OR valid ?k=shareToken
+ * 3. No anonymous fallback to "oldest org"
  */
-async function resolveRacesOrgId(
-  request: { user?: unknown; query?: unknown }
-): Promise<string | null> {
-  // 1) Logged-in caller
+async function resolveRacesOrgId(request: {
+  user?: unknown
+  query?: unknown
+}): Promise<string | null> {
   try {
     if (request.user) {
       const orgId = await getCallerOrgId(request as { user: unknown })
       if (orgId) return orgId
     }
   } catch {
-    // not authenticated — continue
+    // not authenticated
   }
 
-  const query = (request.query || {}) as { org?: string }
+  const query = (request.query || {}) as PublicAccessQuery
+  const slug = typeof query.org === 'string' ? query.org.trim() : ''
+  const token = typeof query.k === 'string' ? query.k.trim() : ''
 
-  // 2) Explicit public slug
-  if (query.org && typeof query.org === 'string') {
-    const org = await prisma.organization.findFirst({
-      where: { slug: query.org.trim(), isActive: true },
-      select: { id: true },
-    })
-    if (org) return org.id
-  }
+  if (!slug) return null
 
-  // 3) Default org (oldest active) so public dashboard still works
-  const fallback = await prisma.organization.findFirst({
-    where: { isActive: true },
-    orderBy: { createdAt: 'asc' },
-    select: { id: true },
+  const org = await prisma.organization.findFirst({
+    where: { slug, isActive: true },
+    select: {
+      id: true,
+      publicViewEnabled: true,
+      publicShareToken: true,
+    },
   })
-  return fallback?.id ?? null
+  if (!org) return null
+
+  if (org.publicViewEnabled) return org.id
+
+  if (token && org.publicShareToken && token === org.publicShareToken) {
+    return org.id
+  }
+
+  return null
 }
 
 app.get('/races', async (request) => {
   const organizationId = await resolveRacesOrgId(request)
 
+  if (!organizationId) {
+    return { data: [] }
+  }
+
   const races = await prisma.race.findMany({
-    where: organizationId
-      ? { election: { organizationId } }
-      : undefined, // no org in DB yet → return all (dev fallback)
+    where: { election: { organizationId } },
     orderBy: { createdAt: 'asc' },
     select: {
       id: true,
@@ -476,6 +615,16 @@ app.get('/races', async (request) => {
 
 app.get('/races/:id/candidates', async (request, reply) => {
   const { id } = request.params as { id: string }
+  const organizationId = await resolveRacesOrgId(request)
+
+  if (organizationId) {
+    const ok = await assertRaceInOrg(id, organizationId)
+    if (!ok) {
+      return reply.status(404).send({
+        error: 'Race not found for this organization',
+      })
+    }
+  }
 
   const candidates = await prisma.candidate.findMany({
     where: { raceId: id, isActive: true },
@@ -1060,7 +1209,7 @@ app.post(
   }
 )
 
-app.get('/results', async (request) => {
+app.get('/results', async (request, reply) => {
   const { raceId, pollingStationId, status } = request.query as {
     raceId?: string
     pollingStationId?: string
@@ -1068,19 +1217,19 @@ app.get('/results', async (request) => {
   }
 
   const organizationId = await resolveRacesOrgId(request)
+  if (!organizationId) {
+    return reply.status(404).send({
+      error: 'Results not published for this organization',
+    })
+  }
 
   const results = await prisma.stationResult.findMany({
     where: {
       ...(raceId ? { raceId } : {}),
       ...(pollingStationId ? { pollingStationId } : {}),
       ...(status ? { status } : {}),
-      // Org isolation: only results for this org's races + submitters
-      ...(organizationId
-        ? {
-            race: { election: { organizationId } },
-            submittedBy: { organizationId },
-          }
-        : {}),
+      race: { election: { organizationId } },
+      submittedBy: { organizationId },
     },
     orderBy: { serverReceivedAt: 'desc' },
     include: {
@@ -1108,17 +1257,19 @@ app.get('/results', async (request) => {
 
 app.get('/results/:id', async (request, reply) => {
   const { id } = request.params as { id: string }
+
   const organizationId = await resolveRacesOrgId(request)
+  if (!organizationId) {
+    return reply.status(404).send({
+      error: 'Results not published for this organization',
+    })
+  }
 
   const result = await prisma.stationResult.findFirst({
     where: {
       id,
-      ...(organizationId
-        ? {
-            race: { election: { organizationId } },
-            submittedBy: { organizationId },
-          }
-        : {}),
+      race: { election: { organizationId } },
+      submittedBy: { organizationId },
     },
     include: {
       votes: {
@@ -1168,6 +1319,7 @@ app.get('/results/:id', async (request, reply) => {
   return { data: result }
 })
 
+
 // ======================
 // AGGREGATION
 // ======================
@@ -1216,7 +1368,7 @@ async function assertRaceInOrg(
   raceId: string,
   organizationId: string | null
 ): Promise<boolean> {
-  if (!organizationId) return true // no org context → allow (dev)
+  if (!organizationId) return false
   const race = await prisma.race.findFirst({
     where: {
       id: raceId,
@@ -1249,8 +1401,15 @@ app.get('/results/aggregate/national', async (request, reply) => {
   }
 
   const organizationId = await resolveRacesOrgId(request)
+  if (!organizationId) {
+    return reply.status(404).send({
+      error: 'Results not published for this organization',
+    })
+  }
   if (!(await assertRaceInOrg(raceId, organizationId))) {
-    return reply.status(404).send({ error: 'Race not found for this organization' })
+    return reply.status(404).send({
+      error: 'Race not found for this organization',
+    })
   }
 
   const results = await prisma.stationResult.findMany({
@@ -1294,8 +1453,15 @@ app.get('/results/aggregate/county/:countyId', async (request, reply) => {
   }
 
   const organizationId = await resolveRacesOrgId(request)
+  if (!organizationId) {
+    return reply.status(404).send({
+      error: 'Results not published for this organization',
+    })
+  }
   if (!(await assertRaceInOrg(raceId, organizationId))) {
-    return reply.status(404).send({ error: 'Race not found for this organization' })
+    return reply.status(404).send({
+      error: 'Race not found for this organization',
+    })
   }
 
   const results = await prisma.stationResult.findMany({
@@ -1358,8 +1524,15 @@ app.get(
     }
 
     const organizationId = await resolveRacesOrgId(request)
+    if (!organizationId) {
+      return reply.status(404).send({
+        error: 'Results not published for this organization',
+      })
+    }
     if (!(await assertRaceInOrg(raceId, organizationId))) {
-      return reply.status(404).send({ error: 'Race not found for this organization' })
+      return reply.status(404).send({
+        error: 'Race not found for this organization',
+      })
     }
 
     const results = await prisma.stationResult.findMany({
@@ -1412,8 +1585,15 @@ app.get('/results/aggregate/ward/:wardId', async (request, reply) => {
   }
 
   const organizationId = await resolveRacesOrgId(request)
+  if (!organizationId) {
+    return reply.status(404).send({
+      error: 'Results not published for this organization',
+    })
+  }
   if (!(await assertRaceInOrg(raceId, organizationId))) {
-    return reply.status(404).send({ error: 'Race not found for this organization' })
+    return reply.status(404).send({
+      error: 'Race not found for this organization',
+    })
   }
 
   const results = await prisma.stationResult.findMany({

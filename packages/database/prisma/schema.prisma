@@ -1,25 +1,22 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider        = "prisma-client"
+  output          = "../generated/prisma"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
   provider = "postgresql"
 }
 
-// ======================
-// ADMINISTRATIVE HIERARCHY
-// ======================
-
 model County {
   id                  String               @id @default(cuid())
   code                String               @unique
   name                String
-  constituencies      Constituency[]
-  positionAdminScopes PositionAdminScope[]
-  organizations       Organization[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
+  constituencies      Constituency[]
+  organizations       Organization[]
+  positionAdminScopes PositionAdminScope[]
 }
 
 model Constituency {
@@ -27,12 +24,12 @@ model Constituency {
   code                String
   name                String
   countyId            String
-  county              County               @relation(fields: [countyId], references: [id])
-  wards               Ward[]
-  positionAdminScopes PositionAdminScope[]
-  organizations       Organization[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
+  county              County               @relation(fields: [countyId], references: [id])
+  organizations       Organization[]
+  positionAdminScopes PositionAdminScope[]
+  wards               Ward[]
 
   @@unique([countyId, code])
   @@index([countyId])
@@ -43,12 +40,12 @@ model Ward {
   code                String
   name                String
   constituencyId      String
-  constituency        Constituency         @relation(fields: [constituencyId], references: [id])
-  pollingStations     PollingStation[]
-  positionAdminScopes PositionAdminScope[]
-  organizations       Organization[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
+  organizations       Organization[]
+  pollingStations     PollingStation[]
+  positionAdminScopes PositionAdminScope[]
+  constituency        Constituency         @relation(fields: [constituencyId], references: [id])
 
   @@unique([constituencyId, code])
   @@index([constituencyId])
@@ -59,71 +56,41 @@ model PollingStation {
   code             String            @unique
   name             String
   wardId           String
-  ward             Ward              @relation(fields: [wardId], references: [id])
   registeredVoters Int?
   latitude         Float?
   longitude        Float?
-  results          StationResult[]
-  agents           AgentAssignment[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  agents           AgentAssignment[]
+  ward             Ward              @relation(fields: [wardId], references: [id])
+  results          StationResult[]
 
   @@index([wardId])
 }
 
-// ======================
-// ORGANIZATIONS (TEAMS)
-// ======================
-
-enum OrgPrimaryLevel {
-  NATIONAL
-  COUNTY
-  CONSTITUENCY
-  WARD
-}
-
 model Organization {
-  id             String          @id @default(cuid())
-  name           String
-  slug           String          @unique
-  code           String?         @unique
-  primaryLevel   OrgPrimaryLevel @default(NATIONAL)
-  countyId       String?
-  county         County?         @relation(fields: [countyId], references: [id])
-  constituencyId String?
-  constituency   Constituency?   @relation(fields: [constituencyId], references: [id])
-  wardId         String?
-  ward           Ward?           @relation(fields: [wardId], references: [id])
-  isActive       Boolean         @default(true)
-  users          User[]
-  elections      Election[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id                String          @id @default(cuid())
+  name              String
+  slug              String          @unique
+  code              String?         @unique
+  primaryLevel      OrgPrimaryLevel @default(NATIONAL)
+  countyId          String?
+  constituencyId    String?
+  wardId            String?
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  publicViewEnabled Boolean         @default(false)
+  publicShareToken  String?         @unique(where: raw("(\"publicShareToken\" IS NOT NULL)"))
+  elections         Election[]
+  constituency      Constituency?   @relation(fields: [constituencyId], references: [id])
+  county            County?         @relation(fields: [countyId], references: [id])
+  ward              Ward?           @relation(fields: [wardId], references: [id])
+  users             User[]
 
   @@index([countyId])
   @@index([constituencyId])
   @@index([wardId])
-}
-
-// ======================
-// USERS & AUTHORIZATION
-// ======================
-
-enum UserRole {
-  SUPER_ADMIN
-  POSITION_ADMIN
-  NATIONAL_VIEWER
-  COUNTY_VIEWER
-  CONSTITUENCY_VIEWER
-  WARD_VIEWER
-  AGENT
-}
-
-enum AdminScopeLevel {
-  NATIONAL
-  COUNTY
-  CONSTITUENCY
-  WARD
 }
 
 model User {
@@ -132,21 +99,21 @@ model User {
   name                String
   role                UserRole             @default(AGENT)
   isActive            Boolean              @default(true)
-  organizationId      String?
-  organization        Organization?        @relation(fields: [organizationId], references: [id])
   countyId            String?
   constituencyId      String?
   wardId              String?
-  createdById         String?
-  createdBy           User?                @relation("UsersCreated", fields: [createdById], references: [id])
-  createdUsers        User[]               @relation("UsersCreated")
-  agentAssignments    AgentAssignment[]    @relation("AgentAssignments")
-  assignmentsCreated  AgentAssignment[]    @relation("AssignmentsCreated")
-  submittedResults    StationResult[]
-  auditLogs           AuditLog[]
-  positionAdminScopes PositionAdminScope[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
+  createdById         String?
+  organizationId      String?
+  assignmentsCreated  AgentAssignment[]    @relation("AssignmentsCreated")
+  agentAssignments    AgentAssignment[]    @relation("AgentAssignments")
+  auditLogs           AuditLog[]
+  positionAdminScopes PositionAdminScope[]
+  submittedResults    StationResult[]
+  createdBy           User?                @relation("UsersCreated", fields: [createdById], references: [id])
+  createdUsers        User[]               @relation("UsersCreated")
+  organization        Organization?        @relation(fields: [organizationId], references: [id])
 
   @@index([createdById])
   @@index([organizationId])
@@ -155,44 +122,40 @@ model User {
 model PositionAdminScope {
   id             String          @id @default(cuid())
   userId         String
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   raceId         String
-  race           Race            @relation(fields: [raceId], references: [id], onDelete: Cascade)
   level          AdminScopeLevel
   countyId       String?
-  county         County?         @relation(fields: [countyId], references: [id])
   constituencyId String?
-  constituency   Constituency?   @relation(fields: [constituencyId], references: [id])
   wardId         String?
-  ward           Ward?           @relation(fields: [wardId], references: [id])
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  constituency   Constituency?   @relation(fields: [constituencyId], references: [id])
+  county         County?         @relation(fields: [countyId], references: [id])
+  race           Race            @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ward           Ward?           @relation(fields: [wardId], references: [id])
 
+  @@unique([userId, raceId, level, countyId, constituencyId, wardId])
   @@index([userId])
   @@index([raceId])
   @@index([countyId])
   @@index([constituencyId])
   @@index([wardId])
-  @@unique([userId, raceId, level, countyId, constituencyId, wardId])
 }
 
 model AgentAssignment {
   id               String         @id @default(cuid())
   userId           String
-  user             User           @relation("AgentAssignments", fields: [userId], references: [id])
   pollingStationId String
-  pollingStation   PollingStation @relation(fields: [pollingStationId], references: [id])
+  createdAt        DateTime       @default(now())
   assignedById     String?
   assignedBy       User?          @relation("AssignmentsCreated", fields: [assignedById], references: [id])
-  createdAt        DateTime       @default(now())
+  pollingStation   PollingStation @relation(fields: [pollingStationId], references: [id])
+  user             User           @relation("AgentAssignments", fields: [userId], references: [id])
 
   @@unique([userId, pollingStationId])
   @@index([assignedById])
 }
-
-// ======================
-// ELECTIONS & CANDIDATES
-// ======================
 
 model Election {
   id             String        @id @default(cuid())
@@ -201,11 +164,11 @@ model Election {
   status         String        @default("DRAFT")
   startDate      DateTime?
   endDate        DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
   races          Race[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
 
   @@index([organizationId])
 }
@@ -213,50 +176,40 @@ model Election {
 model Race {
   id                  String               @id @default(cuid())
   electionId          String
-  election            Election             @relation(fields: [electionId], references: [id])
   position            String
   scope               String
   countyId            String?
   constituencyId      String?
   wardId              String?
-  candidates          Candidate[]
-  results             StationResult[]
-  positionAdminScopes PositionAdminScope[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
-
-  @@index([electionId])
+  candidates          Candidate[]
+  positionAdminScopes PositionAdminScope[]
+  election            Election             @relation(fields: [electionId], references: [id])
+  results             StationResult[]
 }
 
 model Candidate {
   id        String       @id @default(cuid())
   raceId    String
-  race      Race         @relation(fields: [raceId], references: [id])
   name      String
   code      String?
   party     String?
   photoUrl  String?
   isActive  Boolean      @default(true)
-  votes     ResultVote[]
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
+  race      Race         @relation(fields: [raceId], references: [id])
+  votes     ResultVote[]
 
-  @@index([raceId])
-  @@unique([raceId, code])
+  @@unique([raceId, code], where: raw("(code IS NOT NULL)"))
 }
-
-// ======================
-// RESULTS
-// ======================
 
 model StationResult {
   id                String         @id @default(cuid())
   pollingStationId  String
-  pollingStation    PollingStation @relation(fields: [pollingStationId], references: [id])
   raceId            String
-  race              Race           @relation(fields: [raceId], references: [id])
   submittedById     String
-  submittedBy       User           @relation(fields: [submittedById], references: [id])
   totalRegistered   Int?
   totalVoted        Int?
   rejectedBallots   Int            @default(0)
@@ -267,11 +220,13 @@ model StationResult {
   isOffline         Boolean        @default(false)
   deviceInfo        Json?
   status            String         @default("SUBMITTED")
-  votes             ResultVote[]
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
+  votes             ResultVote[]
+  pollingStation    PollingStation @relation(fields: [pollingStationId], references: [id])
+  race              Race           @relation(fields: [raceId], references: [id])
+  submittedBy       User           @relation(fields: [submittedById], references: [id])
 
-  // One result per agent per station per race (multi-party monitoring)
   @@unique([pollingStationId, raceId, submittedById])
   @@index([pollingStationId, raceId])
   @@index([pollingStationId])
@@ -282,22 +237,17 @@ model StationResult {
 model ResultVote {
   id              String        @id @default(cuid())
   stationResultId String
-  stationResult   StationResult @relation(fields: [stationResultId], references: [id], onDelete: Cascade)
   candidateId     String
-  candidate       Candidate     @relation(fields: [candidateId], references: [id])
   votes           Int
+  candidate       Candidate     @relation(fields: [candidateId], references: [id])
+  stationResult   StationResult @relation(fields: [stationResultId], references: [id], onDelete: Cascade)
 
   @@unique([stationResultId, candidateId])
 }
 
-// ======================
-// AUDIT
-// ======================
-
 model AuditLog {
   id         String   @id @default(cuid())
   userId     String?
-  user       User?    @relation(fields: [userId], references: [id])
   action     String
   entityType String?
   entityId   String?
@@ -305,4 +255,29 @@ model AuditLog {
   ipAddress  String?
   userAgent  String?
   createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+}
+
+enum OrgPrimaryLevel {
+  NATIONAL
+  COUNTY
+  CONSTITUENCY
+  WARD
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  NATIONAL_VIEWER
+  COUNTY_VIEWER
+  CONSTITUENCY_VIEWER
+  WARD_VIEWER
+  AGENT
+  POSITION_ADMIN
+}
+
+enum AdminScopeLevel {
+  NATIONAL
+  COUNTY
+  CONSTITUENCY
+  WARD
 }

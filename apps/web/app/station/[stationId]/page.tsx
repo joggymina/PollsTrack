@@ -13,26 +13,38 @@ import { RaceSelector } from '@/components/RaceSelector'
 
 export const dynamic = 'force-dynamic'
 
-type Props = {
-  params: Promise<{ stationId: string }>
-  searchParams: Promise<{ raceId?: string }>
-}
+  type Props = {
+    params: Promise<{ stationId: string }>
+    searchParams: Promise<{ raceId?: string; org?: string; k?: string }>
+  }
 
-export default async function StationPage({ params, searchParams }: Props) {
-  const { stationId } = await params
-  const { raceId: raceIdParam } = await searchParams
+  export default async function StationPage({ params, searchParams }: Props) {
+    const { stationId } = await params
+    const sp = await searchParams
+    const access: OrgAccessParams = {
+      org: sp.org ?? null,
+      k: sp.k ?? null,
+    }
 
-  const allRaces = await getRaces()
+  const allRaces = await getRaces(access)
+
   const races = filterRacesForLevel(allRaces, 'station')
-  const raceId = pickDefaultRaceId(allRaces, 'station', raceIdParam)
+  const raceId = pickDefaultRaceId(allRaces, 'station', sp.raceId)
+
 
   if (!raceId) {
     return (
-      <div className="text-center py-20 text-gray-500">
-        No race selected
+      <div className="text-center py-20 text-gray-500 space-y-2">
+        <p>No race selected</p>
+        {!access.org && (
+          <p className="text-sm">
+            Open this page with an organization share link.
+          </p>
+        )}
       </div>
     )
   }
+
 
   const [result, station] = await Promise.all([
     getStationResult(stationId, raceId),

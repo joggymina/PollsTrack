@@ -155,6 +155,7 @@ export type PositionAdminUser = {
 }
 
 // ---------- Organizations ----------
+
 export type Organization = {
   id: string
   name: string
@@ -163,6 +164,7 @@ export type Organization = {
   countyId: string | null
   constituencyId: string | null
   wardId: string | null
+  publicViewEnabled?: boolean
   county?: { id: string; name: string; code: string } | null
   constituency?: { id: string; name: string; code: string } | null
   ward?: { id: string; name: string; code: string } | null
@@ -178,6 +180,46 @@ export type CreateOrgPayload = {
   adminPhone: string
 }
 
+export type PublicOrg = {
+  id: string
+  name: string
+  slug: string
+  primaryLevel: string
+}
+
+export type PublicSettings = {
+  id: string
+  name: string
+  slug: string
+  publicViewEnabled: boolean
+  publicShareToken: string | null
+  hasShareToken?: boolean
+}
+
+/** Optional org + share token for public dashboard API calls */
+export type OrgAccessParams = {
+  org?: string | null
+  k?: string | null
+}
+
+function withOrgQuery(
+  path: string,
+  access?: OrgAccessParams,
+  extra?: Record<string, string | undefined>
+): string {
+  const q = new URLSearchParams()
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value != null && value !== '') q.set(key, value)
+    }
+  }
+  if (access?.org) q.set('org', access.org)
+  if (access?.k) q.set('k', access.k)
+  const s = q.toString()
+  if (!s) return path
+  return path.includes('?') ? `${path}&${s}` : `${path}?${s}`
+}
+
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     cache: 'no-store',
@@ -185,59 +227,77 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `API error: ${res.status}`)
+    throw new Error(
+      (body as { error?: string }).error || `API error: ${res.status}`
+    )
   }
   return res.json()
 }
 
 // ---------- Public dashboard helpers ----------
+
 export async function getNationalAggregate(
-  raceId: string
+  raceId: string,
+  access?: OrgAccessParams
 ): Promise<AggregateResult> {
-  const data = await fetchJson<{ data: AggregateResult }>(
-    `/results/aggregate/national?raceId=${raceId}`
-  )
+  const path = withOrgQuery('/results/aggregate/national', access, {
+    raceId,
+  })
+  const data = await fetchJson<{ data: AggregateResult }>(path)
   return data.data
 }
 
 export async function getCountyAggregate(
   countyId: string,
-  raceId: string
+  raceId: string,
+  access?: OrgAccessParams
 ): Promise<AggregateResult> {
-  const data = await fetchJson<{ data: AggregateResult }>(
-    `/results/aggregate/county/${countyId}?raceId=${raceId}`
+  const path = withOrgQuery(
+    `/results/aggregate/county/${countyId}`,
+    access,
+    { raceId }
   )
+  const data = await fetchJson<{ data: AggregateResult }>(path)
   return data.data
 }
 
 export async function getConstituencyAggregate(
   constituencyId: string,
-  raceId: string
+  raceId: string,
+  access?: OrgAccessParams
 ): Promise<AggregateResult> {
-  const data = await fetchJson<{ data: AggregateResult }>(
-    `/results/aggregate/constituency/${constituencyId}?raceId=${raceId}`
+  const path = withOrgQuery(
+    `/results/aggregate/constituency/${constituencyId}`,
+    access,
+    { raceId }
   )
+  const data = await fetchJson<{ data: AggregateResult }>(path)
   return data.data
 }
 
 export async function getWardAggregate(
   wardId: string,
-  raceId: string
+  raceId: string,
+  access?: OrgAccessParams
 ): Promise<AggregateResult> {
-  const data = await fetchJson<{ data: AggregateResult }>(
-    `/results/aggregate/ward/${wardId}?raceId=${raceId}`
-  )
+  const path = withOrgQuery(`/results/aggregate/ward/${wardId}`, access, {
+    raceId,
+  })
+  const data = await fetchJson<{ data: AggregateResult }>(path)
   return data.data
 }
 
 export async function getStationResult(
   stationId: string,
-  raceId: string
+  raceId: string,
+  access?: OrgAccessParams
 ): Promise<StationResultDetail | null> {
   try {
-    const data = await fetchJson<{ data: StationResultDetail[] }>(
-      `/results?pollingStationId=${stationId}&raceId=${raceId}`
-    )
+    const path = withOrgQuery('/results', access, {
+      pollingStationId: stationId,
+      raceId,
+    })
+    const data = await fetchJson<{ data: StationResultDetail[] }>(path)
     return data.data?.[0] || null
   } catch {
     return null
@@ -277,28 +337,40 @@ export async function getPollingStations(
   return data.data
 }
 
-export async function getRaces(): Promise<Race[]> {
+export async function getRaces(access?: OrgAccessParams): Promise<Race[]> {
   try {
-    const data = await fetchJson<{ data: Race[] }>('/races')
+    const path = withOrgQuery('/races', access)
+    const data = await fetchJson<{ data: Race[] }>(path)
     return data.data
   } catch {
     return []
   }
 }
 
-export async function getCandidates(raceId: string): Promise<Candidate[]> {
-  const data = await fetchJson<{ data: Candidate[] }>(
-    `/races/${raceId}/candidates`
-  )
+export async function getCandidates(
+  raceId: string,
+  access?: OrgAccessParams
+): Promise<Candidate[]> {
+  const path = withOrgQuery(`/races/${raceId}/candidates`, access)
+  const data = await fetchJson<{ data: Candidate[] }>(path)
   return data.data
 }
 
-export async function getResults(): Promise<StationResultSummary[]> {
-  const data = await fetchJson<{ data: StationResultSummary[] }>('/results')
+export async function getResults(
+  access?: OrgAccessParams
+): Promise<StationResultSummary[]> {
+  const path = withOrgQuery('/results', access)
+  const data = await fetchJson<{ data: StationResultSummary[] }>(path)
+  return data.data
+}
+
+export async function getPublicOrganizations(): Promise<PublicOrg[]> {
+  const data = await fetchJson<{ data: PublicOrg[] }>('/organizations/public')
   return data.data
 }
 
 // ---------- Auth + Agent helpers ----------
+
 export async function login(phone: string): Promise<{
   token: string
   user: {
@@ -349,6 +421,7 @@ export async function submitResults(
 }
 
 // ---------- Organization helpers ----------
+
 export async function createOrganization(body: CreateOrgPayload): Promise<{
   organization: Organization
   user: {
@@ -387,7 +460,51 @@ export async function getMyOrganization(token: string): Promise<Organization> {
   return data.data
 }
 
+export async function getPublicSettings(
+  token: string
+): Promise<PublicSettings> {
+  const data = await fetchJson<{ data: PublicSettings }>(
+    '/organizations/me/public-settings',
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  return data.data
+}
+
+export async function updatePublicSettings(
+  token: string,
+  body: { publicViewEnabled?: boolean; rotateShareToken?: boolean }
+): Promise<PublicSettings> {
+  const data = await fetchJson<{ data: PublicSettings }>(
+    '/organizations/me/public-settings',
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    }
+  )
+  return data.data
+}
+
+/** Build public dashboard share URL for an org */
+export function buildShareUrl(settings: {
+  slug: string
+  publicShareToken?: string | null
+}): string {
+  const base =
+    typeof window !== 'undefined'
+      ? window.location.origin
+      : process.env.NEXT_PUBLIC_WEB_URL || 'https://pollstrack-web.vercel.app'
+  const q = new URLSearchParams()
+  q.set('org', settings.slug)
+  if (settings.publicShareToken) q.set('k', settings.publicShareToken)
+  return `${base}/?${q.toString()}`
+}
+
 // ---------- Admin helpers ----------
+
 export async function getAdminAgents(token: string): Promise<AdminAgent[]> {
   const data = await fetchJson<{ data: AdminAgent[] }>('/admin/agents', {
     headers: { Authorization: `Bearer ${token}` },
@@ -474,6 +591,7 @@ export async function unassignStation(
 }
 
 // ---------- Position admin (ops) ----------
+
 export async function createPositionAdmin(
   token: string,
   body: {

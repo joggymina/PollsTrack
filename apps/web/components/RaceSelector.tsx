@@ -37,6 +37,7 @@ export function RaceSelector({
     const raceId = e.target.value
     const params = new URLSearchParams(searchParams.toString())
     params.set('raceId', raceId)
+    // org + k are preserved via searchParams.toString()
     router.push(`${pathname}?${params.toString()}`)
   }
 

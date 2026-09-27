@@ -4,6 +4,7 @@ import {
   getStationResult,
   getPollingStation,
   getRaces,
+  type OrgAccessParams,
 } from '@/lib/api'
 import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
 import { StatsCards } from '@/components/StatsCards'
@@ -13,24 +14,22 @@ import { RaceSelector } from '@/components/RaceSelector'
 
 export const dynamic = 'force-dynamic'
 
-  type Props = {
-    params: Promise<{ stationId: string }>
-    searchParams: Promise<{ raceId?: string; org?: string; k?: string }>
+type Props = {
+  params: Promise<{ stationId: string }>
+  searchParams: Promise<{ raceId?: string; org?: string; k?: string }>
+}
+
+export default async function StationPage({ params, searchParams }: Props) {
+  const { stationId } = await params
+  const sp = await searchParams
+  const access: OrgAccessParams = {
+    org: sp.org ?? null,
+    k: sp.k ?? null,
   }
 
-  export default async function StationPage({ params, searchParams }: Props) {
-    const { stationId } = await params
-    const sp = await searchParams
-    const access: OrgAccessParams = {
-      org: sp.org ?? null,
-      k: sp.k ?? null,
-    }
-
   const allRaces = await getRaces(access)
-
   const races = filterRacesForLevel(allRaces, 'station')
   const raceId = pickDefaultRaceId(allRaces, 'station', sp.raceId)
-
 
   if (!raceId) {
     return (
@@ -45,15 +44,15 @@ export const dynamic = 'force-dynamic'
     )
   }
 
-
   const [result, station] = await Promise.all([
-    getStationResult(stationId, raceId),
+    getStationResult(stationId, raceId, access),
     getPollingStation(stationId),
   ])
 
   const ward = station?.ward
   const constituency = ward?.constituency
   const county = constituency?.county
+
   const stationName =
     result?.pollingStation?.name || station?.name || 'Polling Station'
 
@@ -68,20 +67,24 @@ export const dynamic = 'force-dynamic'
       }))
       .sort((a, b) => b.totalVotes - a.totalVotes) || []
 
+  const qs = new URLSearchParams()
+  qs.set('raceId', raceId)
+  if (access.org) qs.set('org', access.org)
+  if (access.k) qs.set('k', access.k)
+  const q = qs.toString()
+
   return (
     <div>
       <div className="mb-6">
-        {/* Full breadcrumb – same style as ward/constituency pages */}
         <div className="flex flex-wrap items-center gap-2 text-sm text-blue-600 mb-2">
-          <Link href={`/?raceId=${raceId}`} className="hover:underline">
+          <Link href={`/?${q}`} className="hover:underline">
             National
           </Link>
           <span className="text-gray-400">→</span>
-
           {county && (
             <>
               <Link
-                href={`/county/${county.id}?raceId=${raceId}`}
+                href={`/county/${county.id}?${q}`}
                 className="hover:underline"
               >
                 {county.name}
@@ -89,11 +92,10 @@ export const dynamic = 'force-dynamic'
               <span className="text-gray-400">→</span>
             </>
           )}
-
           {constituency && (
             <>
               <Link
-                href={`/constituency/${constituency.id}?raceId=${raceId}`}
+                href={`/constituency/${constituency.id}?${q}`}
                 className="hover:underline"
               >
                 {constituency.name}
@@ -101,22 +103,16 @@ export const dynamic = 'force-dynamic'
               <span className="text-gray-400">→</span>
             </>
           )}
-
           {ward && (
             <>
-              <Link
-                href={`/ward/${ward.id}?raceId=${raceId}`}
-                className="hover:underline"
-              >
+              <Link href={`/ward/${ward.id}?${q}`} className="hover:underline">
                 {ward.name}
               </Link>
               <span className="text-gray-400">→</span>
             </>
           )}
-
           <span className="text-gray-600">{stationName}</span>
         </div>
-
         <h2 className="text-2xl font-bold text-gray-900">
           {stationName} Results
         </h2>
@@ -139,11 +135,9 @@ export const dynamic = 'force-dynamic'
             totalVoted={result.totalVoted ?? 0}
             totalRejected={result.rejectedBallots ?? 0}
           />
-
           <div className="max-w-2xl">
             <CandidateRanking candidates={candidates} />
           </div>
-
           <p className="mt-4 text-sm text-gray-500">
             Status: <span className="font-medium">{result.status}</span>
             {result.serverReceivedAt && (

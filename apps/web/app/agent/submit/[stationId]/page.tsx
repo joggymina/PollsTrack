@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState, useMemo, FormEvent, ChangeEvent } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   getMe,
   getRaces,
   getCandidates,
+  getResults,
   submitResults,
   type AssignedStation,
   type Race,
@@ -17,43 +18,44 @@ import { addToQueue } from '@/lib/offline-queue'
 
 const inputClass =
   'w-full px-4 py-3 text-lg text-gray-900 bg-white border border-gray-300 rounded-xl placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none'
-
 const voteInputClass =
   'w-24 px-3 py-3 text-lg text-center text-gray-900 bg-white border border-gray-300 rounded-xl placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 outline-none'
-
 const selectClass =
   'w-full px-4 py-3.5 text-base text-gray-900 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none'
-
 const readOnlyClass =
   'w-full px-4 py-3 text-lg text-gray-900 bg-gray-50 border border-gray-200 rounded-xl'
 
 export default function SubmitResultsPage() {
   const router = useRouter()
   const params = useParams()
+  const searchParams = useSearchParams()
   const stationId = params.stationId as string
+  const raceIdFromQuery = searchParams.get('raceId') || ''
 
   const [station, setStation] = useState<AssignedStation | null>(null)
   const [races, setRaces] = useState<Race[]>([])
-  const [selectedRaceId, setSelectedRaceId] = useState('')
+  const [selectedRaceId, setSelectedRaceId] = useState(raceIdFromQuery)
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [votes, setVotes] = useState<Record<string, string>>({})
   const [totalVoted, setTotalVoted] = useState('')
   const [rejectedBallots, setRejectedBallots] = useState('0')
   const [formPhoto, setFormPhoto] = useState<string | null>(null)
   const [photoName, setPhotoName] = useState('')
-
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const [offlineSaved, setOfflineSaved] = useState(false)
+  const [alreadySubmitted, setAlreadySubmitted] = useState(false)
+  const [nextRaceId, setNextRaceId] = useState<string | null>(null)
+
+  const raceLocked = !!raceIdFromQuery
 
   useEffect(() => {
     if (!isLoggedIn()) {
       router.replace('/login')
       return
     }
-
     const token = getToken()
     if (!token) {
       clearAuth()
@@ -63,7 +65,11 @@ export default function SubmitResultsPage() {
 
     async function load() {
       try {
-        const [me, raceList] = await Promise.all([getMe(token!), getRaces()])
+        const [me, raceList, results] = await Promise.all([
+          getMe(token!),
+          getRaces(),
+          getResults().catch(() => []),
+        ])
         const found = me.assignedStations.find((s) => s.id === stationId)
         if (!found) {
           setError('You are not assigned to this station')
@@ -72,10 +78,36 @@ export default function SubmitResultsPage() {
         }
         setStation(found)
         setRaces(raceList)
-        if (raceList.length === 1) setSelectedRaceId(raceList[0].id)
+
+        const initialRace =
+          raceIdFromQuery ||
+          (raceList.length === 1 ? raceList[0].id : '')
+        setSelectedRaceId(initialRace)
+
+        if (initialRace) {
+          const done = results.some(
+            (r) =>
+              r.pollingStationId === stationId && r.raceId === initialRace
+          )
+          setAlreadySubmitted(done)
+        }
+
+        // First unsubmitted race after current (for success CTA)
+        const submittedIds = new Set(
+          results
+            .filter((r) => r.pollingStationId === stationId)
+            .map((r) => r.raceId)
+        )
+        const next = raceList.find(
+          (r) => r.id !== initialRace && !submittedIds.has(r.id)
+        )
+        setNextRaceId(next?.id ?? null)
       } catch (err: any) {
         setError(err.message)
-        if (err.message?.includes('Unauthorized') || err.message?.includes('401')) {
+        if (
+          err.message?.includes('Unauthorized') ||
+          err.message?.includes('401')
+        ) {
           clearAuth()
           router.replace('/login')
         }
@@ -83,9 +115,8 @@ export default function SubmitResultsPage() {
         setLoading(false)
       }
     }
-
     load()
-  }, [stationId, router])
+  }, [stationId, router, raceIdFromQuery])
 
   useEffect(() => {
     if (!selectedRaceId) {
@@ -130,12 +161,10 @@ export default function SubmitResultsPage() {
     reader.readAsDataURL(file)
   }
 
-  // ---- Live validation ----
   const registered = station?.registeredVoters ?? null
   const votedNum = totalVoted === '' ? null : parseInt(totalVoted, 10)
   const rejectedNum =
     rejectedBallots === '' ? 0 : parseInt(rejectedBallots, 10) || 0
-
   const candidateSum = useMemo(() => {
     return candidates.reduce((sum, c) => {
       const v = votes[c.id]
@@ -147,7 +176,6 @@ export default function SubmitResultsPage() {
   const allVotesFilled = candidates.every(
     (c) => votes[c.id] !== '' && votes[c.id] !== undefined
   )
-
   const validVotes =
     votedNum != null && !Number.isNaN(votedNum)
       ? Math.max(0, votedNum - rejectedNum)
@@ -155,7 +183,6 @@ export default function SubmitResultsPage() {
 
   const validationErrors = useMemo(() => {
     const errs: string[] = []
-
     if (votedNum != null) {
       if (votedNum < 0) errs.push('Total voted cannot be negative')
       if (registered != null && votedNum > registered) {
@@ -164,27 +191,23 @@ export default function SubmitResultsPage() {
         )
       }
     }
-
     if (rejectedNum < 0) errs.push('Rejected ballots cannot be negative')
     if (votedNum != null && rejectedNum > votedNum) {
       errs.push(
         `Rejected (${rejectedNum}) cannot exceed total voted (${votedNum})`
       )
     }
-
     if (allVotesFilled && validVotes != null && candidateSum !== validVotes) {
       errs.push(
         `Candidate votes sum (${candidateSum}) must equal valid votes (${validVotes} = voted − rejected)`
       )
     }
-
     for (const c of candidates) {
       const v = votes[c.id]
       if (v !== '' && v !== undefined && parseInt(v, 10) < 0) {
         errs.push(`${c.name}: votes cannot be negative`)
       }
     }
-
     return errs
   }, [
     votedNum,
@@ -203,7 +226,8 @@ export default function SubmitResultsPage() {
     allVotesFilled &&
     votedNum != null &&
     !Number.isNaN(votedNum) &&
-    validationErrors.length === 0
+    validationErrors.length === 0 &&
+    !alreadySubmitted
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -212,10 +236,8 @@ export default function SubmitResultsPage() {
       setError(validationErrors[0] || 'Fix validation errors before submitting')
       return
     }
-
     setSubmitting(true)
     setOfflineSaved(false)
-
     const token = getToken()
     const user = getUser()
     if (!token || !user || !station || !selectedRaceId) return
@@ -248,7 +270,6 @@ export default function SubmitResultsPage() {
           err.message?.includes('NetworkError') ||
           err.message?.includes('network') ||
           err.message?.includes('fetch')
-
         if (isNetworkError || !navigator.onLine) {
           addToQueue(payload, station.name, user.id)
           setOfflineSaved(true)
@@ -270,6 +291,7 @@ export default function SubmitResultsPage() {
   }
 
   if (success || offlineSaved) {
+    const selectedRace = races.find((r) => r.id === selectedRaceId)
     return (
       <div className="max-w-lg mx-auto text-center py-12">
         <div
@@ -293,19 +315,33 @@ export default function SubmitResultsPage() {
             }`}
           >
             {offlineSaved
-              ? `${station?.name} results were saved on this device. They will sync automatically when you are back online.`
-              : `${station?.name} results have been recorded successfully.`}
+              ? `${station?.name} · ${selectedRace?.position || 'Race'} saved on this device.`
+              : `${station?.name} · ${selectedRace?.position || 'Race'} recorded successfully.`}
           </p>
           <div className="mt-6 space-y-3">
+            {nextRaceId && !offlineSaved && (
+              <Link
+                href={`/agent/submit/${stationId}?raceId=${nextRaceId}`}
+                className="block w-full py-3.5 font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700"
+              >
+                Submit next race →
+              </Link>
+            )}
             <Link
-              href="/agent"
-              className={`block w-full py-3.5 font-semibold text-white rounded-xl ${
+              href={`/agent/station/${stationId}`}
+              className={`block w-full py-3.5 font-semibold rounded-xl ${
                 offlineSaved
-                  ? 'bg-amber-600 hover:bg-amber-700'
-                  : 'bg-green-600 hover:bg-green-700'
+                  ? 'text-white bg-amber-600 hover:bg-amber-700'
+                  : 'text-gray-800 bg-white border border-gray-200 hover:bg-gray-50'
               }`}
             >
-              Back to My Stations
+              Back to race list
+            </Link>
+            <Link
+              href="/agent"
+              className="block w-full py-3 text-sm text-gray-500 hover:text-gray-700"
+            >
+              All stations
             </Link>
           </div>
         </div>
@@ -324,47 +360,76 @@ export default function SubmitResultsPage() {
     )
   }
 
+  if (alreadySubmitted) {
+    return (
+      <div className="max-w-lg mx-auto text-center py-12">
+        <div className="bg-green-50 border border-green-100 rounded-2xl p-8">
+          <div className="text-4xl mb-3">✓</div>
+          <h2 className="text-xl font-bold text-green-800">Already submitted</h2>
+          <p className="mt-2 text-green-600">
+            Results for this race at {station.name} are already recorded.
+          </p>
+          <div className="mt-6 space-y-3">
+            <Link
+              href={`/agent/station/${stationId}`}
+              className="block w-full py-3.5 font-semibold text-white bg-green-600 rounded-xl"
+            >
+              Back to race list
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const balanceOk =
     allVotesFilled && validVotes != null && candidateSum === validVotes
+  const selectedRace = races.find((r) => r.id === selectedRaceId)
 
   return (
     <div className="max-w-lg mx-auto">
       <div className="mb-6">
         <Link
-          href="/agent"
+          href={`/agent/station/${stationId}`}
           className="text-sm text-blue-600 hover:underline mb-2 inline-block"
         >
-          ← Back to stations
+          ← Back to races
         </Link>
         <h1 className="text-xl font-bold text-gray-900">{station.name}</h1>
         <p className="text-sm text-gray-500">
           {station.code} · {station.ward.name}
         </p>
+        {selectedRace && (
+          <p className="text-sm font-medium text-blue-700 mt-1">
+            {selectedRace.position}
+          </p>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <div className="bg-white rounded-2xl border border-gray-100 p-5">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Race / Position
-          </label>
-          <select
-            value={selectedRaceId}
-            onChange={(e) => setSelectedRaceId(e.target.value)}
-            className={selectClass}
-            required
-          >
-            <option value="">Select race…</option>
-            {races.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.position}
-              </option>
-            ))}
-          </select>
-        </div>
+        {!raceLocked && (
+          <div className="bg-white rounded-2xl border border-gray-100 p-5">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Race / Position
+            </label>
+            <select
+              value={selectedRaceId}
+              onChange={(e) => setSelectedRaceId(e.target.value)}
+              className={selectClass}
+              required
+            >
+              <option value="">Select race…</option>
+              {races.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.position}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
           <h3 className="font-semibold text-gray-900">Turnout</h3>
-
           <div>
             <label className="block text-sm text-gray-600 mb-1">
               Total Registered (from IEBC register)
@@ -375,11 +440,8 @@ export default function SubmitResultsPage() {
                 : 'Not set in database'}
             </div>
           </div>
-
           <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Total Voted
-            </label>
+            <label className="block text-sm text-gray-600 mb-1">Total Voted</label>
             <input
               type="number"
               min="0"
@@ -391,7 +453,6 @@ export default function SubmitResultsPage() {
               required
             />
           </div>
-
           <div>
             <label className="block text-sm text-gray-600 mb-1">
               Rejected Ballots
@@ -405,8 +466,6 @@ export default function SubmitResultsPage() {
               className={inputClass}
             />
           </div>
-
-          {/* Live balance summary */}
           <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 text-sm space-y-1">
             <div className="flex justify-between">
               <span className="text-gray-600">Valid votes (voted − rejected)</span>
@@ -468,6 +527,12 @@ export default function SubmitResultsPage() {
           </div>
         )}
 
+        {selectedRaceId && candidates.length === 0 && (
+          <div className="bg-yellow-50 text-yellow-800 text-sm px-4 py-3 rounded-xl">
+            No candidates for this race. Ask admin to seed candidates.
+          </div>
+        )}
+
         <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3">
           <h3 className="font-semibold text-gray-900">Form photo (optional)</h3>
           <p className="text-sm text-gray-500">
@@ -483,6 +548,7 @@ export default function SubmitResultsPage() {
           {formPhoto && (
             <div className="space-y-2">
               <p className="text-xs text-gray-500 truncate">{photoName}</p>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={formPhoto}
                 alt="Form preview"
@@ -518,7 +584,6 @@ export default function SubmitResultsPage() {
         >
           {submitting ? 'Submitting…' : 'Submit Results'}
         </button>
-
         <p className="text-center text-xs text-gray-400">
           Results cannot be edited after submission. Numbers must balance.
         </p>

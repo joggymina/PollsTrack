@@ -84,6 +84,16 @@ export default function AdminHomePage() {
         </Link>
 
         <Link
+          href="/admin/public"
+          className="block bg-white rounded-2xl border border-gray-100 p-5 hover:border-blue-300 shadow-sm"
+        >
+          <p className="font-semibold text-gray-900">Public settings</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Homepage listing · Share link & token
+          </p>
+        </Link>
+
+        <Link
           href="/agent"
           className="block bg-white rounded-2xl border border-gray-100 p-5 hover:border-blue-300 shadow-sm"
         >
@@ -97,8 +107,10 @@ export default function AdminHomePage() {
           href="/"
           className="block bg-white rounded-2xl border border-gray-100 p-5 hover:border-blue-300 shadow-sm"
         >
-          <p className="font-semibold text-gray-900">Public dashboard</p>
-          <p className="text-sm text-gray-500 mt-1">Live election results</p>
+          <p className="font-semibold text-gray-900">Public boards</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Open the public homepage
+          </p>
         </Link>
       </div>
     </div>

@@ -4,6 +4,7 @@ import {
   getNationalAggregate,
   getCounties,
   getRaces,
+  getPublicOrganizations,
   type OrgAccessParams,
 } from '@/lib/api'
 import { filterRacesForLevel, pickDefaultRaceId } from '@/lib/races'
@@ -18,6 +19,21 @@ type Props = {
   searchParams: Promise<{ raceId?: string; org?: string; k?: string }>
 }
 
+function levelLabel(level: string) {
+  switch (level) {
+    case 'NATIONAL':
+      return 'National'
+    case 'COUNTY':
+      return 'County'
+    case 'CONSTITUENCY':
+      return 'Constituency'
+    case 'WARD':
+      return 'Ward'
+    default:
+      return level
+  }
+}
+
 export default async function NationalPage({ searchParams }: Props) {
   const sp = await searchParams
   const access: OrgAccessParams = {
@@ -25,20 +41,88 @@ export default async function NationalPage({ searchParams }: Props) {
     k: sp.k ?? null,
   }
 
+  // No org → public organization list
+  if (!access.org) {
+    const orgs = await getPublicOrganizations().catch(() => [])
+
+    return (
+      <div className="max-w-lg mx-auto">
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-bold text-gray-900">
+            Live election boards
+          </h2>
+          <p className="text-gray-500 mt-2">
+            Choose an organization to view public results
+          </p>
+        </div>
+
+        {orgs.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center space-y-3">
+            <p className="text-gray-700 font-medium">No public boards yet</p>
+            <p className="text-sm text-gray-500">
+              Organizations can enable a public dashboard from Admin settings.
+            </p>
+            <div className="pt-2 flex flex-col gap-2">
+              <Link
+                href="/login"
+                className="text-blue-600 font-medium hover:underline"
+              >
+                Agent / admin login
+              </Link>
+              <Link
+                href="/register"
+                className="text-sm text-gray-500 hover:underline"
+              >
+                Register an organization
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {orgs.map((org) => (
+              <Link
+                key={org.id}
+                href={`/?org=${encodeURIComponent(org.slug)}`}
+                className="block bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:border-blue-300 hover:shadow transition-all"
+              >
+                <p className="font-semibold text-gray-900 text-lg">{org.name}</p>
+                <p className="text-sm text-gray-500 mt-1">
+                  {levelLabel(org.primaryLevel)} · View results →
+                </p>
+              </Link>
+            ))}
+          </div>
+        )}
+
+        <p className="text-center text-sm text-gray-400 mt-8">
+          <Link href="/login" className="hover:text-blue-600">
+            Login
+          </Link>
+          {' · '}
+          <Link href="/register" className="hover:text-blue-600">
+            Register org
+          </Link>
+        </p>
+      </div>
+    )
+  }
+
+  // Org selected → national dashboard for that org
   const allRaces = await getRaces(access)
-  // National level → President only
   const races = filterRacesForLevel(allRaces, 'national')
   const raceId = pickDefaultRaceId(allRaces, 'national', sp.raceId)
 
   if (!raceId || races.length === 0) {
     return (
-      <div className="text-center py-20 text-gray-500 space-y-2">
+      <div className="text-center py-20 text-gray-500 space-y-3">
         <p>No national races found for this organization.</p>
-        {!access.org && (
-          <p className="text-sm">
-            Use a share link from your admin, or open a public organization.
-          </p>
-        )}
+        <p className="text-sm">
+          Public view may be off, the share link is invalid, or races are not
+          seeded yet.
+        </p>
+        <Link href="/" className="text-blue-600 hover:underline text-sm">
+          ← All public boards
+        </Link>
       </div>
     )
   }
@@ -49,14 +133,21 @@ export default async function NationalPage({ searchParams }: Props) {
   ])
 
   const orgQs = new URLSearchParams()
-  if (access.org) orgQs.set('org', access.org)
+  orgQs.set('org', access.org)
   if (access.k) orgQs.set('k', access.k)
-  const orgSuffix = orgQs.toString() ? `&${orgQs.toString()}` : ''
+  const orgSuffix = `&${orgQs.toString()}`
 
   return (
     <div>
       <div className="mb-8">
+        <Link
+          href="/"
+          className="text-sm text-blue-600 hover:underline mb-2 inline-block"
+        >
+          ← All public boards
+        </Link>
         <h2 className="text-2xl font-bold text-gray-900">National Overview</h2>
+        <p className="text-sm text-gray-500 mt-0.5">Organization: {access.org}</p>
         <Suspense fallback={<p className="text-gray-500 mt-1">Loading…</p>}>
           <RaceSelector races={races} currentRaceId={raceId} />
         </Suspense>
@@ -72,6 +163,7 @@ export default async function NationalPage({ searchParams }: Props) {
         <div className="lg:col-span-2">
           <CandidateRanking candidates={aggregate.candidates} />
         </div>
+
         <div className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100">
             <h2 className="text-lg font-semibold text-gray-900">Counties</h2>

@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { getMe, getResults, MeResponse } from '@/lib/api'
+import { getMe, getResults, getRaces, type MeResponse, type Race } from '@/lib/api'
 import { getToken, getUser, clearAuth, isLoggedIn } from '@/lib/auth'
 import { getPendingCount } from '@/lib/offline-queue'
 import { syncOfflineQueue } from '@/lib/sync-offline'
@@ -34,29 +34,29 @@ export default function AgentHomePage() {
   const [pendingCount, setPendingCount] = useState(0)
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
-  const [submittedStationIds, setSubmittedStationIds] = useState<Set<string>>(
-    new Set()
-  )
+  const [races, setRaces] = useState<Race[]>([])
+  /** Keys: `${stationId}:${raceId}` */
+  const [submittedKeys, setSubmittedKeys] = useState<Set<string>>(new Set())
 
   function refreshPendingCount() {
     const user = getUser()
     setPendingCount(user ? getPendingCount(user.id) : 0)
   }
 
-  function loadMySubmittedStations() {
-    const userId = getUser()?.id
-    if (!userId) return
-
-    getResults()
-      .then((results) => {
-        // Only stations THIS agent has already submitted
-        const mine = results.filter((r) => r.submittedById === userId)
-        setSubmittedStationIds(
-          new Set(mine.map((r) => r.pollingStationId))
-        )
+  function loadProgress() {
+    Promise.all([getRaces(), getResults()])
+      .then(([raceList, results]) => {
+        setRaces(raceList)
+        const keys = new Set<string>()
+        for (const r of results) {
+          if (r.pollingStationId && r.raceId) {
+            keys.add(`${r.pollingStationId}:${r.raceId}`)
+          }
+        }
+        setSubmittedKeys(keys)
       })
       .catch(() => {
-        // Ignore — page still usable without flags
+        // Page still usable without progress flags
       })
   }
 
@@ -65,7 +65,6 @@ export default function AgentHomePage() {
       router.replace('/login')
       return
     }
-
     const token = getToken()
     if (!token) {
       clearAuth()
@@ -96,6 +95,7 @@ export default function AgentHomePage() {
             if (synced > 0) {
               refreshPendingCount()
               setSyncMessage(`${synced} offline result(s) synced`)
+              loadProgress()
             }
           })
         }
@@ -120,20 +120,17 @@ export default function AgentHomePage() {
             return
           }
         }
-
         if (msg.includes('Unauthorized') || msg.includes('401')) {
           clearAuth()
           localStorage.removeItem(ME_CACHE_KEY)
           router.replace('/login')
           return
         }
-
         setError(msg)
         setLoading(false)
       })
 
-    // Background: my submissions only
-    loadMySubmittedStations()
+    loadProgress()
 
     return () => {
       cancelled = true
@@ -144,7 +141,6 @@ export default function AgentHomePage() {
     function handleOnline() {
       refreshPendingCount()
       setIsOfflineCache(false)
-
       const token = getToken()
       if (token) {
         getMe(token)
@@ -153,9 +149,8 @@ export default function AgentHomePage() {
             setCachedMe(meData)
           })
           .catch(() => {})
-        loadMySubmittedStations()
+        loadProgress()
       }
-
       const user = getUser()
       if (user && getPendingCount(user.id) > 0) {
         setSyncing(true)
@@ -164,6 +159,7 @@ export default function AgentHomePage() {
           setSyncing(false)
           if (synced > 0) {
             setSyncMessage(`${synced} offline result(s) synced successfully`)
+            loadProgress()
           }
           if (failed > 0) {
             setSyncMessage((prev) =>
@@ -173,10 +169,24 @@ export default function AgentHomePage() {
         })
       }
     }
-
     window.addEventListener('online', handleOnline)
     return () => window.removeEventListener('online', handleOnline)
   }, [])
+
+  const totalRaces = races.length
+
+  const progressByStation = useMemo(() => {
+    const map = new Map<string, number>()
+    if (!me || totalRaces === 0) return map
+    for (const s of me.assignedStations) {
+      let done = 0
+      for (const r of races) {
+        if (submittedKeys.has(`${s.id}:${r.id}`)) done++
+      }
+      map.set(s.id, done)
+    }
+    return map
+  }, [me, races, submittedKeys, totalRaces])
 
   function handleLogout() {
     clearAuth()
@@ -190,7 +200,10 @@ export default function AgentHomePage() {
     const { synced, failed } = await syncOfflineQueue()
     refreshPendingCount()
     setSyncing(false)
-    if (synced > 0) setSyncMessage(`${synced} synced`)
+    if (synced > 0) {
+      setSyncMessage(`${synced} synced`)
+      loadProgress()
+    }
     if (failed > 0) {
       setSyncMessage((m) => (m ? `${m}, ${failed} failed` : `${failed} failed`))
     }
@@ -209,6 +222,7 @@ export default function AgentHomePage() {
       <div className="text-center py-20">
         <p className="text-red-600 mb-4">{error}</p>
         <button
+          type="button"
           onClick={() => router.replace('/login')}
           className="text-blue-600 font-medium"
         >
@@ -226,12 +240,11 @@ export default function AgentHomePage() {
     <div className="max-w-lg mx-auto">
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">
-            Hello, {me.name}
-          </h1>
+          <h1 className="text-xl font-bold text-gray-900">Hello, {me.name}</h1>
           <p className="text-sm text-gray-500 mt-0.5">{me.phone}</p>
         </div>
         <button
+          type="button"
           onClick={handleLogout}
           className="text-sm text-gray-500 hover:text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-50"
         >
@@ -258,6 +271,7 @@ export default function AgentHomePage() {
             </p>
           </div>
           <button
+            type="button"
             disabled={
               syncing ||
               (typeof navigator !== 'undefined' && !navigator.onLine)
@@ -292,50 +306,47 @@ export default function AgentHomePage() {
       ) : (
         <div className="space-y-3">
           {me.assignedStations.map((station) => {
-            const alreadySubmitted = submittedStationIds.has(station.id)
-
+            const done = progressByStation.get(station.id) ?? 0
+            const allDone = totalRaces > 0 && done >= totalRaces
             return (
-              <div
+              <Link
                 key={station.id}
-                className={`bg-white rounded-2xl border shadow-sm p-5 ${
-                  alreadySubmitted
+                href={`/agent/station/${station.id}`}
+                className={`block bg-white rounded-2xl border shadow-sm p-5 transition-all ${
+                  allDone
                     ? 'border-green-200'
-                    : 'border-gray-100 hover:border-blue-300 hover:shadow transition-all'
+                    : 'border-gray-100 hover:border-blue-300 hover:shadow'
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-semibold text-gray-900 text-lg">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-900 text-lg truncate">
                       {station.name}
                     </p>
-                    <p className="text-sm text-gray-500 mt-0.5">
-                      {station.code}
-                    </p>
+                    <p className="text-sm text-gray-500 mt-0.5">{station.code}</p>
                     <p className="text-xs text-gray-400 mt-1">
                       {station.ward.name} · {station.ward.constituency.name} ·{' '}
                       {station.ward.constituency.county.name}
                     </p>
                   </div>
-                  {!alreadySubmitted && (
-                    <div className="text-blue-600 text-2xl font-light">→</div>
-                  )}
+                  <span className="text-blue-600 text-2xl font-light shrink-0">
+                    →
+                  </span>
                 </div>
-
                 <div className="mt-4 pt-3 border-t border-gray-50">
-                  {alreadySubmitted ? (
+                  {totalRaces === 0 ? (
+                    <span className="text-sm text-gray-500">No races loaded</span>
+                  ) : allDone ? (
                     <span className="inline-block text-sm font-medium text-green-700 bg-green-50 px-3 py-1.5 rounded-lg">
-                      ✓ Already submitted
+                      ✓ All {totalRaces} races submitted
                     </span>
                   ) : (
-                    <Link
-                      href={`/agent/submit/${station.id}`}
-                      className="inline-block text-sm font-medium text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg active:scale-[0.98]"
-                    >
-                      Submit Results
-                    </Link>
+                    <span className="inline-block text-sm font-medium text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg">
+                      {done} of {totalRaces} races done · Open
+                    </span>
                   )}
                 </div>
-              </div>
+              </Link>
             )
           })}
         </div>
